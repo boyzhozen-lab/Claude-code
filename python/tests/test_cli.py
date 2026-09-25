@@ -72,7 +72,7 @@ def test_backtest_and_challenge_commands(config_file, capsys):
     assert main(cfg + ["backtest", "--strategy", "trend_breakout", "rsi2_reversion"]) == 0
     out = capsys.readouterr().out
     assert "trend_breakout on GOLD" in out and "PORTFOLIO" in out and "no [costs] entry" in out
-    assert (config_file.parent.parent / "reports" / "backtest_trend_breakout_rsi2_reversion_D1.csv").exists()
+    assert (config_file.parent.parent / "reports" / "backtest_trend_breakout_rsi2_reversion.csv").exists()
 
     assert main(cfg + ["backtest", "--strategy", "trend_breakout", "--walk-forward"]) == 0
     assert "train" in capsys.readouterr().out
@@ -87,3 +87,27 @@ def test_backtest_and_challenge_commands(config_file, capsys):
 def test_backtest_without_data(config_file, capsys):
     assert main(["--config", str(config_file), "backtest", "--strategy", "trend_breakout"]) == 1
     assert "run fetch-bars first" in capsys.readouterr().out
+
+
+def test_mixed_daily_and_hourly_strategies(config_file, capsys):
+    import numpy as np
+    import pandas as pd
+    from trading_ai.data.bars import save_bars
+
+    rng = np.random.default_rng(4)
+    bars_dir = config_file.parent.parent / "data" / "bars"
+    for tf, freq, n, vol in (("D1", "D", 365 * 5, 8.0), ("H1", "h", 24 * 365 * 2, 1.5)):
+        close = 2000 + np.cumsum(rng.normal(0, vol, n))
+        save_bars(pd.DataFrame({
+            "time": pd.date_range("2022-01-01", periods=n, freq=freq, tz="UTC"),
+            "open": close, "high": close + vol, "low": close - vol, "close": close,
+            "tick_volume": 1, "spread": 20,
+        }), bars_dir / f"GOLD_{tf}.csv")
+
+    cfg = ["--config", str(config_file)]
+    assert main(cfg + ["backtest", "--strategy", "trend_breakout", "london_breakout", "--risk", "0.5"]) == 0
+    out = capsys.readouterr().out
+    assert "london_breakout on GOLD" in out and "trend_breakout on GOLD" in out and "PORTFOLIO" in out
+
+    assert main(cfg + ["backtest", "--strategy", "london_breakout", "--timeframe", "D1"]) == 1
+    assert "needs H1" in capsys.readouterr().out

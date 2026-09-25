@@ -176,3 +176,72 @@ def test_walk_forward_only_counts_unseen_periods():
     assert (wf.oos_trades["entry_time"] >= first_test).all()
     for f in wf.folds:
         assert set(f.params) == set(TrendBreakout.param_grid)
+
+
+def hourly_day(date, range_hl=(101.0, 99.0), breakout_hour=None, breakout_close=103.0, later=None):
+    """24 H1 bars: quiet range, optional breakout bar, then `later` (hour -> (o,h,l,c))."""
+    rows = []
+    for h in range(24):
+        if h < 7:
+            o = c = 100.0
+            hi, lo = range_hl
+        else:
+            o = c = 100.0
+            hi, lo = 100.5, 99.5
+        rows.append([o, hi, lo, c])
+    if breakout_hour is not None:
+        rows[breakout_hour] = [100.0, breakout_close + 0.2, 100.0, breakout_close]
+    for h, bar in (later or {}).items():
+        rows[h] = list(bar)
+    df = pd.DataFrame(rows, columns=["open", "high", "low", "close"])
+    df.insert(0, "time", pd.date_range(date, periods=24, freq="h", tz="UTC"))
+    return df
+
+
+def test_london_breakout_long_flat_by_evening():
+    from trading_ai.strategies import SessionBreakout
+    day1 = hourly_day("2024-03-04", breakout_hour=8, later={h: (103.0, 103.5, 102.5, 103.0) for h in range(9, 24)})
+    [t] = run_backtest(day1, SessionBreakout(), "GOLD")
+    assert t.direction == "long"
+    assert t.entry_time == pd.Timestamp("2024-03-04 09:00", tz="UTC")
+    assert t.stop_dist == pytest.approx(2.0)          # range 99..101
+    assert t.exit_reason == "signal"
+    assert t.exit_time == pd.Timestamp("2024-03-04 20:00", tz="UTC")
+
+
+def test_london_breakout_only_first_signal_and_no_entry_after_window():
+    from trading_ai.strategies import SessionBreakout
+    s = SessionBreakout()
+    day = hourly_day("2024-03-05", later={
+        8: (100.0, 100.2, 97.8, 98.0),     # first break: short
+        9: (98.0, 103.2, 98.0, 103.0),     # opposite break: ignored
+        13: (100.0, 104.0, 100.0, 104.0),  # after entry window: ignored
+    })
+    sig = s.signals(day)
+    assert sig["short_entry"].sum() == 1 and sig["long_entry"].sum() == 0
+
+
+def test_london_breakout_skips_narrow_range_and_rejects_daily_bars():
+    from trading_ai.strategies import SessionBreakout
+    day = hourly_day("2024-03-06", range_hl=(100.01, 99.99), breakout_hour=8)
+    assert not SessionBreakout().signals(day)[["long_entry", "short_entry"]].any().any()
+    with pytest.raises(ValueError, match="H1"):
+        SessionBreakout().signals(ohlc([FLAT] * 5))
+
+
+def test_breakout_on_last_bar_of_day_is_not_carried_overnight():
+    from trading_ai.strategies import SessionBreakout
+    short_day = hourly_day("2024-03-07", breakout_hour=8).iloc[:9]   # data ends at the breakout bar
+    next_day = hourly_day("2024-03-08")
+    trades = run_backtest(pd.concat([short_day, next_day], ignore_index=True), SessionBreakout(), "GOLD")
+    assert trades == []
+
+
+def test_ny_breakout_uses_us_open_range():
+    from trading_ai.strategies import NYBreakout
+    rows = hourly_day("2024-03-04")
+    rows.loc[13:14, ["high", "low"]] = [102.0, 98.0]
+    rows.loc[16, ["open", "high", "low", "close"]] = [100.0, 103.2, 100.0, 103.0]
+    sig = NYBreakout().signals(rows)
+    assert sig.loc[16, "long_entry"] and sig["long_entry"].sum() == 1
+    assert sig.loc[16, "stop_dist"] == pytest.approx(4.0)

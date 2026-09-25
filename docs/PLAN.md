@@ -49,9 +49,10 @@
 
 | # | ກຸ່ມ | ຕະຫຼາດ | ແນວຄິດ | ໄລຍະຖື | ລຳດັບ |
 |---|---|---|---|---|---|
-| A | Trend Following | Gold, US100 | ເບຣກຈຸດສູງ ຫຼື ຕ່ຳ N ມື້, ຕາມແນວໂນ້ມໃຫຍ່ | ຫຼາຍມື້ – ອາທິດ | ເລີ່ມກ່ອນ |
-| B | Mean Reversion | US500, US30 | ຊື້ຕອນຍໍ່ລົງແຮງໃນ uptrend | 1–5 ມື້ | ເລີ່ມກ່ອນ |
-| C | Session Breakout | Gold, US100, GBPUSD | ເບຣກກອບລາຄາຊ່ວງເປີດ London ຫຼື New York | ພາຍໃນມື້ | ຕໍ່ມາ |
+| A | Trend Following (`trend_breakout`) | Gold, US100 | ເບຣກຈຸດສູງ ຫຼື ຕ່ຳ N ມື້, ຕາມແນວໂນ້ມໃຫຍ່ | ຫຼາຍມື້ – ອາທິດ | ເລີ່ມກ່ອນ |
+| B | Mean Reversion (`rsi2_reversion`) | US500, US30 | ຊື້ຕອນຍໍ່ລົງແຮງໃນ uptrend | 1–5 ມື້ | ເລີ່ມກ່ອນ |
+| C | Session Breakout (`london_breakout`) | Gold, GBPUSD, EURUSD | ກອບລາຄາຊ່ວງ Asia (00–07 UTC) → ເທຣດການເບຣກຄັ້ງທຳອິດຊ່ວງ London (07–12), ປິດກ່ອນ 20 UTC | ພາຍໃນມື້ (H1) | ໂຄດແລ້ວ |
+| C2 | Session Breakout (`ny_breakout`) | US100, US500, US30, Gold | ກອບລາຄາຊ່ວງເປີດຕະຫຼາດ US (13–15 UTC) → ເທຣດການເບຣກຈົນຮອດ 18 UTC, ປິດກ່ອນ 20 UTC | ພາຍໃນມື້ (H1) | ໂຄດແລ້ວ |
 | D | Range Reversion | EURUSD ແລະ ຄູ່ເງິນທີ່ແກວ່ງໃນກອບ | ຂາຍຈຸດສູງ, ຊື້ຈຸດຕ່ຳ ຂອງກອບ | ພາຍໃນມື້ | ຕໍ່ມາ |
 
 **ເປົ້າໝາຍ:** ໄດ້ portfolio ຂອງ 2–4 ກົນລະຍຸດທີ່ບໍ່ກ່ຽວພັນກັນ (low correlation), ເພື່ອໃຫ້ເສັ້ນກຳໄລລຽບ.

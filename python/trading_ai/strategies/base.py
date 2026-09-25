@@ -22,6 +22,8 @@ class Strategy(ABC):
     # Small grid for walk-forward selection; keep it small to limit overfitting.
     param_grid: ClassVar[dict[str, list[Any]]]
     max_bars: ClassVar[int | None] = None  # time exit, in bars
+    default_timeframe: ClassVar[str] = "D1"
+    default_symbols: ClassVar[tuple[str, ...]] = ()  # empty = every symbol in config
 
     def __init__(self, **params: Any):
         unknown = set(params) - set(self.default_params)

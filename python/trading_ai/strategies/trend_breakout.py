@@ -25,6 +25,7 @@ class TrendBreakout(Strategy):
         "exit_len": [10, 20],
         "stop_atr": [2.0, 3.0],
     }
+    default_symbols = ("GOLD", "NAS100", "SPX500", "DOW30", "EURUSD", "GBPUSD", "USDJPY")
 
     def signals(self, bars: pd.DataFrame) -> pd.DataFrame:
         p = self.params

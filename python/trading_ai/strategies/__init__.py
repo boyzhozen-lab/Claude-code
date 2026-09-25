@@ -1,8 +1,9 @@
 from trading_ai.strategies.base import Strategy
 from trading_ai.strategies.rsi2_reversion import RSI2Reversion
+from trading_ai.strategies.session_breakout import NYBreakout, SessionBreakout
 from trading_ai.strategies.trend_breakout import TrendBreakout
 
-STRATEGIES: dict[str, type[Strategy]] = {s.name: s for s in (TrendBreakout, RSI2Reversion)}
+STRATEGIES: dict[str, type[Strategy]] = {s.name: s for s in (TrendBreakout, RSI2Reversion, SessionBreakout, NYBreakout)}
 
 
 def get_strategy(name: str) -> type[Strategy]:

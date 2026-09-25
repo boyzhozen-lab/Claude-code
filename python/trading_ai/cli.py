@@ -138,11 +138,13 @@ def _collect_backtest_trades(s: Settings, args: argparse.Namespace) -> pd.DataFr
     parts = []
     for name in args.strategy:
         cls = get_strategy(name)
-        for internal in args.symbols or list(s.symbols):
+        timeframe = args.timeframe or cls.default_timeframe
+        symbols = args.symbols or [x for x in cls.default_symbols if x in s.symbols] or list(s.symbols)
+        for internal in symbols:
             s.broker_symbol(internal)  # validates the name
-            path = barstore.bars_path(s.bars_dir, internal, args.timeframe)
+            path = barstore.bars_path(s.bars_dir, internal, timeframe)
             if not path.exists():
-                print(f"  {name} {internal}: no {args.timeframe} data, run fetch-bars first")
+                print(f"  {name} {internal}: no {timeframe} data, run fetch-bars first")
                 continue
             bars = barstore.load_bars(path)
             cost = s.costs.get(internal)
@@ -150,14 +152,22 @@ def _collect_backtest_trades(s: Settings, args: argparse.Namespace) -> pd.DataFr
                 print(f"  warning: no [costs] entry for {internal}, assuming zero cost")
                 cost = 0.0
             if args.walk_forward:
-                wf = walk_forward(bars, cls, internal, cost)
+                try:
+                    wf = walk_forward(bars, cls, internal, cost)
+                except ValueError as e:
+                    print(f"  {name} {internal}: {e}")
+                    continue
                 for f in wf.folds:
                     params = ", ".join(f"{k}={v}" for k, v in f.params.items())
                     print(f"  {name} {internal} test {f.test_start:%Y-%m-%d}->{f.test_end:%Y-%m-%d}: "
                           f"[{params}] train {f.train_r:+.1f}R  test {f.test_r:+.1f}R ({f.test_trades} trades)")
                 trades = wf.oos_trades
             else:
-                trades = trades_frame(run_backtest(bars, cls(), internal, cost))
+                try:
+                    trades = trades_frame(run_backtest(bars, cls(), internal, cost))
+                except ValueError as e:
+                    print(f"  {name} {internal}: {e}")
+                    continue
             parts.append(trades)
     if not parts:
         return trades_frame([])
@@ -194,7 +204,7 @@ def cmd_backtest(s: Settings, args: argparse.Namespace) -> int:
         _print_performance("PORTFOLIO (all combined)", trades, args.risk)
     reports = s.project_root / "reports"
     reports.mkdir(exist_ok=True)
-    out = reports / f"backtest_{'_'.join(args.strategy)}_{args.timeframe}{'_wf' if args.walk_forward else ''}.csv"
+    out = reports / f"backtest_{'_'.join(args.strategy)}{'_' + args.timeframe if args.timeframe else ''}{'_wf' if args.walk_forward else ''}.csv"
     trades.to_csv(out, index=False)
     print(f"\nTrades saved to {out}")
     return 0
@@ -250,8 +260,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add_backtest_args(sp: argparse.ArgumentParser) -> None:
         sp.add_argument("--strategy", nargs="+", required=True, choices=list(STRATEGIES))
-        sp.add_argument("--symbols", nargs="+", help="internal names; default: all in config")
-        sp.add_argument("--timeframe", default="D1")
+        sp.add_argument("--symbols", nargs="+", help="internal names; default: each strategy's own list")
+        sp.add_argument("--timeframe", help="default: each strategy's own (D1 or H1)")
         sp.add_argument("--walk-forward", action="store_true",
                         help="only count trades from periods not used to choose parameters")
 

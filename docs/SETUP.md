@@ -88,6 +88,12 @@ cd %USERPROFILE%\Documents\trading-ai
 | `python -m trading_ai backtest --strategy rsi2_reversion --symbols SPX500 DOW30 NAS100` | ທົດສອບກົນລະຍຸດ B ກັບ indices |
 | `python -m trading_ai backtest --strategy trend_breakout rsi2_reversion --walk-forward` | ທົດສອບແບບ walk-forward: ນັບສະເພາະຜົນໃນຊ່ວງທີ່ບໍ່ໄດ້ໃຊ້ເລືອກ parameter (ຊື່ສັດກວ່າ) |
 | `python -m trading_ai challenge --strategy trend_breakout rsi2_reversion --walk-forward` | ຈຳລອງການເສັງ FTMO 10,000 ເທື່ອ ຕໍ່ລະດັບຄວາມສ່ຽງ |
+| `python -m trading_ai backtest --strategy london_breakout ny_breakout --walk-forward` | ທົດສອບກົນລະຍຸດ C (Session Breakout, ໃຊ້ຂໍ້ມູນ H1) |
+| `python -m trading_ai challenge --strategy trend_breakout rsi2_reversion london_breakout ny_breakout --walk-forward` | ຈຳລອງການເສັງດ້ວຍ portfolio ທຸກກົນລະຍຸດລວມກັນ |
+
+ແຕ່ລະກົນລະຍຸດມີ timeframe ແລະ symbol ຂອງມັນເອງ (A: D1 ທຸກ symbol, B: D1 indices, C: H1 Gold ແລະ Forex, C2: H1 indices ແລະ Gold). ປ່ຽນໄດ້ດ້ວຍ `--timeframe` ແລະ `--symbols`.
+
+**ເວລາໃນກົນລະຍຸດ C ເປັນ UTC.** ເມື່ອເອີຣົບ ຫຼື ອາເມລິກາປ່ຽນເວລາ (DST), session ຈະເລື່ອນ 1 ຊົ່ວໂມງ. ຕອນນີ້ຍັງບໍ່ໄດ້ປັບເລື່ອງນີ້.
 
 **ວິທີອ່ານຕາຕະລາງ `challenge`:**
 
