@@ -1,0 +1,31 @@
+# Trading AI settings. No secrets here: API keys live in .env (not committed).
+
+[broker]
+name = "exness"
+# Timezone of the broker's MT5 server clock. Exness uses UTC.
+# FTMO uses Eastern European time: set "Europe/Athens" there (verify first).
+server_timezone = "UTC"
+# Leave empty to attach to the MT5 terminal that is already open and logged in.
+# Set it when several MT5 terminals are installed, e.g.
+# terminal_path = 'C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe'
+terminal_path = ""
+
+# Internal name = broker symbol name. Open MT5 → Market Watch to check the
+# exact names on your account (Exness demo accounts often add an "m" suffix).
+[symbols]
+GOLD = "XAUUSDm"
+NAS100 = "USTECm"
+SPX500 = "US500m"
+DOW30 = "US30m"
+EURUSD = "EURUSDm"
+GBPUSD = "GBPUSDm"
+USDJPY = "USDJPYm"
+
+[download]
+timeframes = ["M15", "H1", "D1"]
+years = 5
+
+[paths]
+# Relative paths are resolved from the project root.
+data_dir = "data"
+journal_db = "data/journal.db"

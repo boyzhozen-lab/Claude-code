@@ -10,10 +10,10 @@ __pycache__/
 venv/
 
 # Data & outputs
-data/
+/data/
 *.db
 *.sqlite
-reports/
+/reports/
 
 # MT5 compiled
 *.ex5
@@ -22,3 +22,5 @@ reports/
 # OS
 .DS_Store
 Thumbs.db
+*.egg-info/
+.pytest_cache/
