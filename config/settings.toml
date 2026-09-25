@@ -29,3 +29,31 @@ years = 5
 # Relative paths are resolved from the project root.
 data_dir = "data"
 journal_db = "data/journal.db"
+
+# Round-trip trading cost per trade in PRICE units (spread + commission +
+# slippage). These are rough estimates: check your account's real spreads and
+# commissions, and make them a bit worse rather than better.
+[costs]
+GOLD = 0.40
+NAS100 = 2.0
+SPX500 = 0.6
+DOW30 = 3.0
+EURUSD = 0.00012
+GBPUSD = 0.00018
+USDJPY = 0.018
+
+# Challenge rules in % of the initial balance. Check the firm's current rules
+# before paying for a challenge; they change.
+[challenge.phase1]
+profit_target = 10.0
+max_daily_loss = 5.0
+max_total_loss = 10.0
+min_trading_days = 4
+max_days = 0          # 0 = no time limit
+
+[challenge.phase2]
+profit_target = 5.0
+max_daily_loss = 5.0
+max_total_loss = 10.0
+min_trading_days = 4
+max_days = 0

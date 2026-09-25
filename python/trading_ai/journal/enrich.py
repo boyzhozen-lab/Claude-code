@@ -10,21 +10,13 @@ from typing import Callable
 
 import pandas as pd
 
+from trading_ai.indicators import atr
 from trading_ai.timeutil import TIMEFRAME_MINUTES, trading_session
 
 BarsLoader = Callable[[str, str], "pd.DataFrame | None"]
 
 # Finest first: MAE/MFE are only as accurate as the bars used.
 EXCURSION_TIMEFRAMES = ["M1", "M5", "M15", "M30", "H1"]
-
-
-def atr(df: pd.DataFrame, n: int) -> pd.Series:
-    prev_close = df["close"].shift()
-    tr = pd.concat(
-        [df["high"] - df["low"], (df["high"] - prev_close).abs(), (df["low"] - prev_close).abs()],
-        axis=1,
-    ).max(axis=1)
-    return tr.rolling(n).mean()
 
 
 def _closed_before(df: pd.DataFrame, timeframe: str, t: pd.Timestamp) -> pd.DataFrame:

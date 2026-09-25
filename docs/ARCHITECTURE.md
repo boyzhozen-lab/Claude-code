@@ -97,6 +97,33 @@ Windows PC / VPS
 - ຂຽນລາຍງານປະຈຳວັນ ແລະ ອາທິດ
 - **ຂໍ້ຈຳກັດ:** Claude ບໍ່ປ່ຽນ EA ໂດຍກົງ. ທຸກຂໍ້ສະເໜີຕ້ອງຜ່ານ backtest + ມະນຸດອະນຸມັດ
 
+## 5b. Multi-agent desk ແລະ ການປ່ຽນໂມເດວ AI
+
+ຊັ້ນ AI ບໍ່ຜູກກັບ AI ຍີ່ຫໍ້ໃດ. ທຸກ agent ເອີ້ນຜ່ານ interface ດຽວກັນ, ສະນັ້ນປ່ຽນໂມເດວໄດ້ດ້ວຍການແກ້ config:
+
+```toml
+[ai.agents]
+setup   = "anthropic:claude-..."   # ຕົວຢ່າງ; ຊື່ໂມເດວຕັ້ງໃນ config
+context = "anthropic:claude-..."
+exit    = "openai:gpt-..."
+veto    = "anthropic:claude-..."
+```
+
+```
+ສັນຍານຈາກ EA
+   ↓
+┌─ Setup Agent:    ຄຸນນະພາບຂອງ setup (ທຽບກັບ setup ທີ່ຄ້າຍກັນໃນ journal)
+├─ Context Agent:  ຂ່າວ, ຄວາມຜັນຜວນ, liquidity, ຄະແນນຄວາມສ່ຽງຂອງມື້
+├─ Exit Agent:     SL ແລະ TP ສົມເຫດສົມຜົນບໍ (ທຽບກັບ MAE/MFE ໃນອະດີດ)
+└─ Veto Agent:     ສະຫຼຸບ → take | reduce | skip + ຄວາມໝັ້ນໃຈ + ເຫດຜົນ
+   ↓
+ບັນທຶກໃນ journal (ai_verdict, ai_confidence, ai_reason + ຊື່ໂມເດວ)
+```
+
+**ການແຂ່ງໂມເດວ:** ແລ່ນຫຼາຍໂມເດວກັບສັນຍານຊຸດດຽວກັນໃນ shadow mode. ຫຼັງ 100+ ໄມ້ ທຽບຜົນວ່າ "ຖ້າເຮັດຕາມໂມເດວນີ້" ຈະໄດ້ R ລວມ ແລະ drawdown ເທົ່າໃດ. ໂມເດວທີ່ດີທີ່ສຸດຈຶ່ງໄດ້ຂຶ້ນລະດັບອຳນາດ 1 ຫຼື 2.
+
+**ຂໍ້ຈຳກັດ:** AI ໃຊ້ເວລາຕອບຫຼາຍວິນາທີ. ສະນັ້ນ desk ນີ້ເໝາະກັບກົນລະຍຸດ H1 ຫຼື D1, ບໍ່ເໝາະກັບ scalping. ຖ້າ API ລົ້ມ ຫຼື ຕອບຊ້າເກີນ timeout, EA ຈະເຮັດຕາມກົດປົກກະຕິ.
+
 ## 6. Backtest ແລະ ຕົວຈຳລອງການເສັງ
 
 - **ຂໍ້ມູນ:** ດຶງຈາກ MT5 ດ້ວຍ Python package `MetaTrader5` (ຮອງຮັບ Windows ເທົ່ານັ້ນ)

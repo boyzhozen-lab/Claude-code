@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from trading_ai.backtest.challenge import ChallengeRules
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "settings.toml"
@@ -25,6 +27,8 @@ class Settings:
     history_years: int
     data_dir: Path
     journal_db: Path
+    costs: dict[str, float] = field(default_factory=dict)  # round-trip, price units
+    challenge: dict[str, ChallengeRules] = field(default_factory=dict)
 
     @property
     def bars_dir(self) -> Path:
@@ -76,4 +80,28 @@ def load_settings(path: Path | str | None = None) -> Settings:
         history_years=int(download.get("years", 5)),
         data_dir=resolve(paths.get("data_dir", "data")),
         journal_db=resolve(paths.get("journal_db", "data/journal.db")),
+        costs={k: float(v) for k, v in raw.get("costs", {}).items()},
+        challenge=_challenge_rules(raw.get("challenge", {})),
     )
+
+
+FTMO_DEFAULTS = {
+    "phase1": ChallengeRules(10.0, 5.0, 10.0, 4),
+    "phase2": ChallengeRules(5.0, 5.0, 10.0, 4),
+}
+
+
+def _challenge_rules(raw: dict) -> dict[str, ChallengeRules]:
+    rules = dict(FTMO_DEFAULTS)
+    for phase, values in raw.items():
+        try:
+            rules[phase] = ChallengeRules(
+                profit_target=float(values["profit_target"]),
+                max_daily_loss=float(values["max_daily_loss"]),
+                max_total_loss=float(values["max_total_loss"]),
+                min_trading_days=int(values.get("min_trading_days", 0)),
+                max_days=int(values.get("max_days", 0)),
+            )
+        except KeyError as e:
+            raise ConfigError(f"[challenge.{phase}] is missing {e}") from None
+    return rules

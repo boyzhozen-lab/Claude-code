@@ -51,3 +51,39 @@ def test_missing_mt5_package_is_a_clean_error(config_file, capsys, monkeypatch):
 def test_unknown_symbol_is_a_clean_error(fake_mt5, config_file, capsys):
     assert main(["--config", str(config_file), "fetch-bars", "--symbols", "BTC"]) == 2
     assert "Unknown symbol 'BTC'" in capsys.readouterr().err
+
+
+def test_backtest_and_challenge_commands(config_file, capsys):
+    import numpy as np
+    import pandas as pd
+    from trading_ai.data.bars import save_bars
+
+    rng = np.random.default_rng(11)
+    n = 365 * 6
+    close = 2000 + np.cumsum(rng.normal(0.3, 8, n))
+    bars = pd.DataFrame({
+        "time": pd.date_range("2019-01-01", periods=n, freq="D", tz="UTC"),
+        "open": close, "high": close + 5, "low": close - 5, "close": close,
+        "tick_volume": 1, "spread": 20,
+    })
+    save_bars(bars, config_file.parent.parent / "data" / "bars" / "GOLD_D1.csv")
+    cfg = ["--config", str(config_file)]
+
+    assert main(cfg + ["backtest", "--strategy", "trend_breakout", "rsi2_reversion"]) == 0
+    out = capsys.readouterr().out
+    assert "trend_breakout on GOLD" in out and "PORTFOLIO" in out and "no [costs] entry" in out
+    assert (config_file.parent.parent / "reports" / "backtest_trend_breakout_rsi2_reversion_D1.csv").exists()
+
+    assert main(cfg + ["backtest", "--strategy", "trend_breakout", "--walk-forward"]) == 0
+    assert "train" in capsys.readouterr().out
+
+    code = main(cfg + ["challenge", "--strategy", "trend_breakout", "rsi2_reversion",
+                       "--risks", "0.5", "1.0", "--runs", "500"])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "P1 pass" in out and "0.50%" in out
+
+
+def test_backtest_without_data(config_file, capsys):
+    assert main(["--config", str(config_file), "backtest", "--strategy", "trend_breakout"]) == 1
+    assert "run fetch-bars first" in capsys.readouterr().out

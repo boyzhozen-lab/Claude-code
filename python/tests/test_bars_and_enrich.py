@@ -3,7 +3,8 @@ import pandas as pd
 import pytest
 
 from trading_ai.data.bars import load_bars, normalize_rates, save_bars, validate_bars
-from trading_ai.journal.enrich import Enricher, atr
+from trading_ai.indicators import atr
+from trading_ai.journal.enrich import Enricher
 
 
 def make_bars(start, periods, freq, base=100.0, step=0.0, spread=1.0):

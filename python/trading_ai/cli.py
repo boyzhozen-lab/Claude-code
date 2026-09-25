@@ -8,6 +8,10 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
+from trading_ai.backtest.challenge import simulate
+from trading_ai.backtest.engine import run_backtest, trades_frame
+from trading_ai.backtest.metrics import daily_r, performance
+from trading_ai.backtest.walkforward import walk_forward
 from trading_ai.config import ConfigError, Settings, load_settings
 from trading_ai.data import bars as barstore
 from trading_ai.data.mt5_client import MT5Error, account_summary, ensure_symbol, fetch_history, fetch_rates, mt5_session
@@ -15,6 +19,7 @@ from trading_ai.journal.db import Journal
 from trading_ai.journal.enrich import Enricher
 from trading_ai.journal.importer import trades_from_history
 from trading_ai.journal.stats import max_drawdown, summarize
+from trading_ai.strategies import STRATEGIES, get_strategy
 
 
 def cmd_check(s: Settings, args: argparse.Namespace) -> int:
@@ -128,6 +133,95 @@ def cmd_stats(s: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _collect_backtest_trades(s: Settings, args: argparse.Namespace) -> pd.DataFrame:
+    """Run every strategy on every symbol; return all trades (walk-forward OOS if asked)."""
+    parts = []
+    for name in args.strategy:
+        cls = get_strategy(name)
+        for internal in args.symbols or list(s.symbols):
+            s.broker_symbol(internal)  # validates the name
+            path = barstore.bars_path(s.bars_dir, internal, args.timeframe)
+            if not path.exists():
+                print(f"  {name} {internal}: no {args.timeframe} data, run fetch-bars first")
+                continue
+            bars = barstore.load_bars(path)
+            cost = s.costs.get(internal)
+            if cost is None:
+                print(f"  warning: no [costs] entry for {internal}, assuming zero cost")
+                cost = 0.0
+            if args.walk_forward:
+                wf = walk_forward(bars, cls, internal, cost)
+                for f in wf.folds:
+                    params = ", ".join(f"{k}={v}" for k, v in f.params.items())
+                    print(f"  {name} {internal} test {f.test_start:%Y-%m-%d}->{f.test_end:%Y-%m-%d}: "
+                          f"[{params}] train {f.train_r:+.1f}R  test {f.test_r:+.1f}R ({f.test_trades} trades)")
+                trades = wf.oos_trades
+            else:
+                trades = trades_frame(run_backtest(bars, cls(), internal, cost))
+            parts.append(trades)
+    if not parts:
+        return trades_frame([])
+    return pd.concat(parts, ignore_index=True).sort_values("exit_time", ignore_index=True)
+
+
+PERF_FORMAT = {
+    "trades": "{:.0f}", "trades_per_year": "{:.1f}", "win_rate": "{:.0%}", "avg_r": "{:+.2f}",
+    "profit_factor": "{:.2f}", "total_r": "{:+.1f}", "return_pct": "{:+.1f}%",
+    "return_pct_per_year": "{:+.1f}%", "max_dd_pct": "{:.1f}%", "worst_day_pct": "{:+.1f}%",
+    "losing_streak": "{:.0f}", "years": "{:.1f}",
+}
+
+
+def _print_performance(title: str, trades: pd.DataFrame, risk: float) -> None:
+    perf = performance(trades, risk)
+    print(f"\n{title}")
+    if not perf["trades"]:
+        print("  no trades")
+        return
+    for key, fmt in PERF_FORMAT.items():
+        print(f"  {key:<20} {fmt.format(perf[key])}")
+
+
+def cmd_backtest(s: Settings, args: argparse.Namespace) -> int:
+    trades = _collect_backtest_trades(s, args)
+    if trades.empty:
+        print("No trades.")
+        return 1
+    print(f"\nRisk per trade: {args.risk}% of initial balance. Swap/financing costs are NOT included.")
+    for (strategy, symbol), group in trades.groupby(["strategy", "symbol"]):
+        _print_performance(f"{strategy} on {symbol}", group, args.risk)
+    if trades.groupby(["strategy", "symbol"]).ngroups > 1:
+        _print_performance("PORTFOLIO (all combined)", trades, args.risk)
+    reports = s.project_root / "reports"
+    reports.mkdir(exist_ok=True)
+    out = reports / f"backtest_{'_'.join(args.strategy)}_{args.timeframe}{'_wf' if args.walk_forward else ''}.csv"
+    trades.to_csv(out, index=False)
+    print(f"\nTrades saved to {out}")
+    return 0
+
+
+def cmd_challenge(s: Settings, args: argparse.Namespace) -> int:
+    trades = _collect_backtest_trades(s, args)
+    if len(trades) < 30:
+        print(f"Only {len(trades)} trades: too few for a meaningful simulation.")
+        return 1
+    days = daily_r(trades).to_numpy()
+    p1, p2 = s.challenge["phase1"], s.challenge["phase2"]
+    print(f"\n{len(trades)} trades over {len(days)} trading days, {args.runs} simulated challenges per row.")
+    print(f"Phase 1: +{p1.profit_target}% target, -{p1.max_daily_loss}%/day, -{p1.max_total_loss}% total. "
+          f"Phase 2: +{p2.profit_target}% target.\n")
+    print(f"{'risk/trade':>10} {'P1 pass':>8} {'daily fail':>10} {'total fail':>10} {'no result':>9} "
+          f"{'median days':>11} {'P2 pass':>8} {'both':>6}")
+    for risk in args.risks:
+        r1 = simulate(days, risk, p1, runs=args.runs, seed=args.seed)
+        r2 = simulate(days, risk, p2, runs=args.runs, seed=args.seed + 1)
+        print(f"{risk:>9.2f}% {r1.pass_rate:>8.0%} {r1.fail_daily:>10.0%} {r1.fail_total:>10.0%} "
+              f"{r1.unresolved:>9.0%} {r1.median_days:>11.0f} {r2.pass_rate:>8.0%} {r1.pass_rate * r2.pass_rate:>6.0%}")
+    print("\n'no result' = neither passed nor failed within ~1 year of trading days.")
+    print("Rules are checked on closed daily P&L; real intraday floating losses make it harder.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="trading_ai", description="Trading AI tools")
     p.add_argument("--config", help="path to settings.toml (default: config/settings.toml)")
@@ -153,6 +247,25 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--by", nargs="*", default=["symbol", "session"],
                     help="group by columns, e.g. strategy_id symbol session weekday trend_d1 exit_reason")
     st.set_defaults(func=cmd_stats)
+
+    def add_backtest_args(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument("--strategy", nargs="+", required=True, choices=list(STRATEGIES))
+        sp.add_argument("--symbols", nargs="+", help="internal names; default: all in config")
+        sp.add_argument("--timeframe", default="D1")
+        sp.add_argument("--walk-forward", action="store_true",
+                        help="only count trades from periods not used to choose parameters")
+
+    bt = sub.add_parser("backtest", help="test strategies on downloaded history")
+    add_backtest_args(bt)
+    bt.add_argument("--risk", type=float, default=0.5, help="%% of balance risked per trade")
+    bt.set_defaults(func=cmd_backtest)
+
+    ch = sub.add_parser("challenge", help="simulate prop-firm challenges from backtest results")
+    add_backtest_args(ch)
+    ch.add_argument("--risks", nargs="+", type=float, default=[0.25, 0.5, 0.75, 1.0, 1.5])
+    ch.add_argument("--runs", type=int, default=10_000)
+    ch.add_argument("--seed", type=int, default=0)
+    ch.set_defaults(func=cmd_challenge)
     return p
 
 
