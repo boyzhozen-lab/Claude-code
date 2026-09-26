@@ -10,7 +10,7 @@ import pandas as pd
 
 from trading_ai.backtest.challenge import simulate
 from trading_ai.backtest.engine import run_backtest, trades_frame
-from trading_ai.backtest.metrics import daily_r, performance
+from trading_ai.backtest.metrics import daily_r, daily_r_correlation, performance
 from trading_ai.backtest.orb import OrbParams, orb_backtest
 from trading_ai.backtest.walkforward import walk_forward
 from trading_ai.config import ConfigError, Settings, load_settings
@@ -21,6 +21,7 @@ from trading_ai.data.mt5_client import MT5Error, account_summary, ensure_symbol,
 from trading_ai.journal.db import Journal
 from trading_ai.journal.enrich import Enricher
 from trading_ai.journal.importer import trades_from_history
+from trading_ai.forward import compare_trades, summarize_check
 from trading_ai.journal.stats import max_drawdown, summarize
 from trading_ai.strategies import STRATEGIES, get_strategy
 
@@ -237,6 +238,13 @@ def cmd_backtest(s: Settings, args: argparse.Namespace) -> int:
         _print_performance(f"{strategy} on {symbol}", group, args.risk)
     if trades.groupby(["strategy", "symbol"]).ngroups > 1:
         _print_performance("PORTFOLIO (all combined)", trades, args.risk)
+    for name, group in trades.groupby("strategy"):
+        if trades["strategy"].nunique() > 1 and group["symbol"].nunique() > 1:
+            _print_performance(f"{name} (all its symbols)", group, args.risk)
+    corr = daily_r_correlation(trades)
+    if not corr.empty:
+        print("\nCorrelation of daily results between strategies (near 0 = good diversification):")
+        print(corr.round(2).to_string())
     reports = s.project_root / "reports"
     reports.mkdir(exist_ok=True)
     out = reports / f"backtest_{'_'.join(args.strategy)}{'_' + args.timeframe if args.timeframe else ''}{'_wf' if args.walk_forward else ''}.csv"
@@ -367,6 +375,70 @@ def cmd_backtest_orb(s: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_forward_check(s: Settings, args: argparse.Namespace) -> int:
+    """Compare the EA's live trades with what the backtest would have done since --since."""
+    cls = get_strategy(args.strategy)
+    since = pd.Timestamp(args.since, tz="UTC")
+    symbols = args.symbols or [x for x in cls.default_symbols if x in s.symbols]
+    tf = cls.default_timeframe
+    now = datetime.now(timezone.utc)
+    with mt5_session(s.terminal_path) as mt5:
+        account = str(account_summary(mt5)["login"])
+        for internal in symbols:   # refresh recent bars so the backtest sees the same days
+            raw = fetch_rates(mt5, s.broker_symbol(internal), tf, now - timedelta(days=60), now)
+            if not raw.empty:
+                barstore.save_bars(barstore.normalize_rates(raw, s.server_timezone),
+                                   barstore.bars_path(s.bars_dir, internal, tf))
+        deals, orders = fetch_history(mt5, (since - pd.Timedelta(days=2)).to_pydatetime())
+    result = trades_from_history(deals, orders, account, s.server_timezone, s.internal_symbol)
+    with Journal(s.journal_db) as journal:
+        journal.insert_trades(result.trades)
+        live = journal.trades_df()
+    live = live[(live["strategy_id"] == cls.name) & (live["account"] == account)
+                & (live["open_time"] >= since - pd.Timedelta(days=1))]
+
+    parts = []
+    for internal in symbols:
+        path = barstore.bars_path(s.bars_dir, internal, tf)
+        if not path.exists():
+            print(f"  {internal}: no {tf} data")
+            continue
+        bars = barstore.load_bars(path)
+        swap = _swap_for(s, internal, float(bars["close"].iloc[-1]))
+        trades = trades_frame(run_backtest(bars, cls(), internal, s.costs.get(internal, 0.0), *swap))
+        parts.append(trades[trades["entry_time"] >= since])
+    backtest = pd.concat(parts, ignore_index=True) if parts else trades_frame([])
+
+    cmp = compare_trades(backtest, live)
+    print(f"\nForward check: {cls.name} on account {account} since {since:%Y-%m-%d}, symbols {', '.join(symbols)}")
+    if cmp.empty:
+        print("No backtest signals and no live trades yet. Normal early on: RSI2 trades about once a week.")
+        return 0
+    view = cmp.copy()
+    for col in ("bt_entry_time", "live_entry_time", "bt_exit_time", "live_exit_time"):
+        if col in view:
+            view[col] = view[col].dt.strftime("%m-%d %H:%M")
+    cols = [c for c in ("status", "symbol", "direction", "bt_entry_time", "live_entry_time", "entry_slip_r",
+                        "bt_exit_time", "live_exit_time", "bt_exit_reason", "live_exit_reason", "bt_r", "live_r")
+            if c in view]
+    with pd.option_context("display.width", 200, "display.max_columns", 20):
+        print(view[cols].to_string(index=False, na_rep="-", float_format=lambda x: f"{x:+.2f}"))
+    sm = summarize_check(cmp)
+    print(f"\nmatched {sm['matched']}  missed by EA {sm['missed_by_ea']}  extra live {sm['extra_live']}  "
+          f"still open {sm['still_open']}")
+    if sm["matched"]:
+        print(f"avg entry slippage {sm['avg_entry_slip_r']:+.3f}R (backtest assumes about +0.01R)  "
+              f"same exit day {sm['same_exit_day']}/{sm['matched']}")
+        print(f"R on matched trades: backtest {sm['bt_r_matched']:+.2f}  live {sm['live_r_matched']:+.2f}")
+    if sm["missed_by_ea"] or sm["extra_live"]:
+        print("CHECK: missed or extra trades mean the EA and the backtest disagree (EA off? MT5 closed? manual trades?)")
+    out = s.project_root / "reports" / f"forward_check_{cls.name}.csv"
+    out.parent.mkdir(exist_ok=True)
+    cmp.to_csv(out, index=False)
+    print(f"Details saved to {out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="trading_ai", description="Trading AI tools")
     p.add_argument("--config", help="path to settings.toml (default: config/settings.toml)")
@@ -415,6 +487,12 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("--runs", type=int, default=10_000)
     ch.add_argument("--seed", type=int, default=0)
     ch.set_defaults(func=cmd_challenge)
+
+    fc = sub.add_parser("forward-check", help="compare the EA's live trades with the backtest")
+    fc.add_argument("--strategy", default="rsi2_reversion", choices=list(STRATEGIES))
+    fc.add_argument("--since", default="2026-09-28", help="forward test start date (YYYY-MM-DD)")
+    fc.add_argument("--symbols", nargs="+")
+    fc.set_defaults(func=cmd_forward_check)
 
     ob = sub.add_parser("backtest-orb", help="backtest USTEC_ORB_EA v1.6 rules on M5 data")
     ob.add_argument("--symbol", default="NAS100")

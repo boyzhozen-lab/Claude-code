@@ -52,3 +52,12 @@ def performance(trades: pd.DataFrame, risk_pct: float) -> dict[str, float]:
         "swap_r": float(t["swap_r"].sum()) if "swap_r" in t else 0.0,
         "years": years,
     }
+
+
+def daily_r_correlation(trades: pd.DataFrame, by: str = "strategy") -> pd.DataFrame:
+    """Correlation of daily R between groups (e.g. strategies), days without trades count as 0.
+    Low or negative values mean the groups make and lose money on different days."""
+    series = {name: daily_r(g) for name, g in trades.groupby(by)}
+    if len(series) < 2:
+        return pd.DataFrame()
+    return pd.DataFrame(series).fillna(0.0).corr()

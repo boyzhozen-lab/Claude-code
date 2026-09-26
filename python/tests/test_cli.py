@@ -159,3 +159,17 @@ def test_list_symbols(fake_mt5, config_file, capsys):
     assert "XAUUSDm" in out and "1 symbol(s)" in out
     assert main(["--config", str(config_file), "list-symbols", "indices"]) == 0
     assert "0 symbol(s)" in capsys.readouterr().out
+
+
+def test_forward_check_runs_end_to_end(fake_mt5, config_file, capsys):
+    import time
+    from conftest import deal
+    now = int(time.time())
+    fake_mt5.deals = [deal(1, 70, now - 7200, 0, 0, 0.1, 2000.0, magic=2201),
+                      deal(2, 70, now - 3600, 1, 1, 0.1, 2005.0, profit=50.0, magic=2201)]
+    since = time.strftime("%Y-%m-%d", time.gmtime(now - 86400 * 3))
+    cfg = ["--config", str(config_file)]
+    assert main(cfg + ["fetch-bars", "--timeframes", "D1", "--years", "2"]) == 0
+    assert main(cfg + ["forward-check", "--symbols", "GOLD", "--since", since]) == 0
+    out = capsys.readouterr().out
+    assert "extra_live" in out and "extra live 1" in out

@@ -1,4 +1,5 @@
-"""Strategy B: short-term mean reversion (Connors RSI(2) style), long only."""
+"""Strategy B: short-term mean reversion (Connors RSI(2) style). Long only by
+default; RSI2Both mirrors the rules for shorts in downtrends."""
 
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ class RSI2Reversion(Strategy):
         "exit_len": 5,
         "atr_len": 10,
         "stop_atr": 3.0,   # prop firms require a stop; kept wide so it rarely interferes
+        "allow_short": False,
     }
     param_grid = {
         "entry_rsi": [5.0, 10.0, 20.0],
@@ -32,12 +34,22 @@ class RSI2Reversion(Strategy):
     def signals(self, bars: pd.DataFrame) -> pd.DataFrame:
         p = self.params
         close = bars["close"]
-        false = pd.Series(False, index=bars.index)
+        trend = sma(close, p["trend_len"])
+        r = rsi(close, p["rsi_len"])
+        exit_ma = sma(close, p["exit_len"])
+        shorts = bool(p["allow_short"])
         return pd.DataFrame({
-            "long_entry": (close > sma(close, p["trend_len"])) & (rsi(close, p["rsi_len"]) < p["entry_rsi"]),
-            "short_entry": false,
-            "long_exit": close > sma(close, p["exit_len"]),
-            "short_exit": false,
+            "long_entry": (close > trend) & (r < p["entry_rsi"]),
+            "short_entry": (close < trend) & (r > 100 - p["entry_rsi"]) & shorts,
+            "long_exit": close > exit_ma,
+            "short_exit": close < exit_ma,
             "stop_dist": p["stop_atr"] * atr(bars, p["atr_len"]),
             "target_dist": np.nan,
         }, index=bars.index)
+
+
+class RSI2Both(RSI2Reversion):
+    name = "rsi2_both"
+    description = "RSI(2) mean reversion both ways: buy dips in uptrends, sell rallies in downtrends."
+    default_params = RSI2Reversion.default_params | {"allow_short": True}
+    default_symbols = ("GOLD", "EURUSD", "GBPUSD", "USDJPY")

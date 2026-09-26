@@ -276,3 +276,37 @@ def test_swap_spec_conversion():
     assert swap_per_night(interest, 5000.0)[0] == pytest.approx(-0.5)
     assert swap_per_night({"swap_mode": 2, "swap_long": -1.0, "swap_short": 0.0}, 1.0)[2] is not None
     assert triple_swap_weekday({"swap_rollover3days": 3}) == 2   # MT5 Wednesday -> Python 2
+
+
+def test_turn_of_month_holds_across_month_end():
+    from trading_ai.strategies import TurnOfMonth
+    days = pd.bdate_range("2024-01-02", "2024-03-29", tz="UTC")
+    bars = pd.DataFrame({"time": days, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0})
+    trades = run_backtest(bars, TurnOfMonth(entry_days_before=2, exit_day=3), "X")
+    # Entry at the open of January's 2nd-to-last trading day (Jan 30), exit at the open of Feb's 4th (Feb 6)
+    first = trades[0]
+    assert first.entry_time == pd.Timestamp("2024-01-30", tz="UTC")
+    assert first.exit_time == pd.Timestamp("2024-02-06", tz="UTC")
+    assert first.exit_reason == "signal"
+    assert len(trades) == 3 and trades[-1].exit_reason == "end"   # March's trade is still open when the data ends
+
+
+def test_rsi2_both_goes_short_in_downtrends_only():
+    from trading_ai.strategies import RSI2Both, RSI2Reversion
+    rng = np.random.default_rng(8)
+    close = 300 - 0.3 * np.arange(600) + rng.normal(0, 1.5, 600).cumsum() * 0.3
+    bars = ohlc([(c, c + 1, c - 1, c) for c in close], start="2020-01-01")
+    both = trades_frame(run_backtest(bars, RSI2Both(), "X"))
+    assert (both["direction"] == "short").any()
+    long_only = trades_frame(run_backtest(bars, RSI2Reversion(), "X"))
+    assert (long_only["direction"] == "long").all()
+
+
+def test_daily_r_correlation():
+    from trading_ai.backtest.metrics import daily_r_correlation
+    a = fake_trades([1.0, -1.0, 1.0, -1.0]).assign(strategy="a")
+    b = fake_trades([1.0, -1.0, 1.0, -1.0]).assign(strategy="b")
+    c = fake_trades([-1.0, 1.0, -1.0, 1.0]).assign(strategy="c")
+    corr = daily_r_correlation(pd.concat([a, b, c]))
+    assert corr.loc["a", "b"] == pytest.approx(1.0) and corr.loc["a", "c"] == pytest.approx(-1.0)
+    assert daily_r_correlation(a).empty
