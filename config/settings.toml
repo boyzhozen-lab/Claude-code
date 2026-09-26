@@ -75,3 +75,10 @@ max_daily_loss = 5.0
 max_total_loss = 10.0
 min_trading_days = 4
 max_days = 0
+
+# AI layer. Keys live in .env (ANTHROPIC_API_KEY), never here.
+# provider:model is swappable; only "anthropic" is implemented so far.
+[ai]
+provider = "anthropic"
+model = "claude-opus-5"
+effort = "medium"      # low | medium | high: depth of reasoning and cost per report

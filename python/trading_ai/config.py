@@ -30,10 +30,17 @@ class Settings:
     journal_db: Path
     costs: dict[str, float] = field(default_factory=dict)  # round-trip, price units
     challenge: dict[str, ChallengeRules] = field(default_factory=dict)
+    ai_provider: str = "anthropic"
+    ai_model: str = "claude-opus-5"
+    ai_effort: str = "medium"
 
     @property
     def bars_dir(self) -> Path:
         return self.data_dir / "bars"
+
+    @property
+    def env_path(self) -> Path:
+        return self.project_root / ".env"
 
     @property
     def specs_path(self) -> Path:
@@ -88,6 +95,9 @@ def load_settings(path: Path | str | None = None) -> Settings:
         journal_db=resolve(paths.get("journal_db", "data/journal.db")),
         costs={k: float(v) for k, v in raw.get("costs", {}).items()},
         challenge=_challenge_rules(raw.get("challenge", {})),
+        ai_provider=raw.get("ai", {}).get("provider", "anthropic"),
+        ai_model=raw.get("ai", {}).get("model", "claude-opus-5"),
+        ai_effort=raw.get("ai", {}).get("effort", "medium"),
     )
 
 

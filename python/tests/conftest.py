@@ -14,6 +14,7 @@ AccountInfo = namedtuple("AccountInfo", "login server name currency balance equi
 Deal = namedtuple("Deal", "ticket order time time_msc type entry magic position_id reason volume price commission swap profit fee symbol comment")
 Order = namedtuple("Order", "ticket time_setup time_setup_msc position_id sl tp symbol")
 TerminalInfo = namedtuple("TerminalInfo", "data_path path")
+Position = namedtuple("Position", "ticket symbol type volume price_open sl tp profit magic time")
 
 
 def deal(ticket, pos, t, type_, entry, volume, price, profit=0.0, commission=0.0, swap=0.0,
@@ -33,6 +34,10 @@ class FakeMT5(types.ModuleType):
         self.connected = False
         self.data_path = ""
         self.install_path = ""
+        self.positions: list = []
+
+    def positions_get(self):
+        return tuple(self.positions)
 
     def terminal_info(self):
         return TerminalInfo(self.data_path, self.install_path)

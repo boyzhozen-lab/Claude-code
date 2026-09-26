@@ -93,3 +93,10 @@ def fetch_history(mt5: Any, start: datetime, end: datetime | None = None) -> tup
     if deals is None or orders is None:
         raise MT5Error(f"Could not read trade history: {mt5.last_error()}")
     return [d._asdict() for d in deals], [o._asdict() for o in orders]
+
+
+def open_positions(mt5: Any) -> list[dict]:
+    positions = mt5.positions_get()
+    if positions is None:
+        raise MT5Error(f"Could not read open positions: {mt5.last_error()}")
+    return [pos._asdict() for pos in positions]

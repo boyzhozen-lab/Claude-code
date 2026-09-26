@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -17,7 +20,12 @@ from trading_ai.config import ConfigError, Settings, load_settings
 from trading_ai.data import bars as barstore
 from trading_ai.data import specs as symspecs
 from trading_ai.data import terminal as term
-from trading_ai.data.mt5_client import MT5Error, account_summary, ensure_symbol, fetch_history, fetch_rates, mt5_session
+from trading_ai.data.mt5_client import (
+    MT5Error, account_summary, ensure_symbol, fetch_history, fetch_rates, mt5_session, open_positions,
+)
+from trading_ai.env import load_env, set_env_value
+from trading_ai.notify import telegram
+from trading_ai.report import build_facts, position_dict, render_plain
 from trading_ai.journal.db import Journal
 from trading_ai.journal.enrich import Enricher
 from trading_ai.journal.importer import trades_from_history
@@ -375,21 +383,19 @@ def cmd_backtest_orb(s: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_forward_check(s: Settings, args: argparse.Namespace) -> int:
-    """Compare the EA's live trades with what the backtest would have done since --since."""
-    cls = get_strategy(args.strategy)
-    since = pd.Timestamp(args.since, tz="UTC")
-    symbols = args.symbols or [x for x in cls.default_symbols if x in s.symbols]
+def _forward_compare(s: Settings, mt5, account: str, strategy: str, since: pd.Timestamp,
+                     symbols: list[str] | None = None) -> tuple[pd.DataFrame, list[str]]:
+    """Inside an open MT5 session: refresh bars and history, return (comparison, symbols)."""
+    cls = get_strategy(strategy)
+    symbols = symbols or [x for x in cls.default_symbols if x in s.symbols]
     tf = cls.default_timeframe
     now = datetime.now(timezone.utc)
-    with mt5_session(s.terminal_path) as mt5:
-        account = str(account_summary(mt5)["login"])
-        for internal in symbols:   # refresh recent bars so the backtest sees the same days
-            raw = fetch_rates(mt5, s.broker_symbol(internal), tf, now - timedelta(days=60), now)
-            if not raw.empty:
-                barstore.save_bars(barstore.normalize_rates(raw, s.server_timezone),
-                                   barstore.bars_path(s.bars_dir, internal, tf))
-        deals, orders = fetch_history(mt5, (since - pd.Timedelta(days=2)).to_pydatetime())
+    for internal in symbols:   # refresh recent bars so the backtest sees the same days
+        raw = fetch_rates(mt5, s.broker_symbol(internal), tf, now - timedelta(days=60), now)
+        if not raw.empty:
+            barstore.save_bars(barstore.normalize_rates(raw, s.server_timezone),
+                               barstore.bars_path(s.bars_dir, internal, tf))
+    deals, orders = fetch_history(mt5, (since - pd.Timedelta(days=2)).to_pydatetime())
     result = trades_from_history(deals, orders, account, s.server_timezone, s.internal_symbol)
     with Journal(s.journal_db) as journal:
         journal.insert_trades(result.trades)
@@ -408,8 +414,16 @@ def cmd_forward_check(s: Settings, args: argparse.Namespace) -> int:
         trades = trades_frame(run_backtest(bars, cls(), internal, s.costs.get(internal, 0.0), *swap))
         parts.append(trades[trades["entry_time"] >= since])
     backtest = pd.concat(parts, ignore_index=True) if parts else trades_frame([])
+    return compare_trades(backtest, live), symbols
 
-    cmp = compare_trades(backtest, live)
+
+def cmd_forward_check(s: Settings, args: argparse.Namespace) -> int:
+    """Compare the EA's live trades with what the backtest would have done since --since."""
+    cls = get_strategy(args.strategy)
+    since = pd.Timestamp(args.since, tz="UTC")
+    with mt5_session(s.terminal_path) as mt5:
+        account = str(account_summary(mt5)["login"])
+        cmp, symbols = _forward_compare(s, mt5, account, cls.name, since, args.symbols)
     print(f"\nForward check: {cls.name} on account {account} since {since:%Y-%m-%d}, symbols {', '.join(symbols)}")
     if cmp.empty:
         print("No backtest signals and no live trades yet. Normal early on: RSI2 trades about once a week.")
@@ -437,6 +451,150 @@ def cmd_forward_check(s: Settings, args: argparse.Namespace) -> int:
     cmp.to_csv(out, index=False)
     print(f"Details saved to {out}")
     return 0
+
+
+# ---------------------------------------------------------------- AI + Telegram
+
+FORWARD_SINCE = "2026-09-28"   # start of the RSI2 forward test on the demo account
+
+
+def cmd_telegram_setup(s: Settings, args: argparse.Namespace) -> int:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+        print(f"Put TELEGRAM_BOT_TOKEN=... in {s.env_path} first (token from @BotFather).")
+        return 1
+    chat_id = telegram.find_chat_id(token)
+    if chat_id is None:
+        print("No message found. Open your bot in Telegram, press Start / send it any message, then run this again.")
+        return 1
+    set_env_value(s.env_path, "TELEGRAM_CHAT_ID", chat_id)
+    telegram.send_message(token, chat_id, "✅ Trading AI ເຊື່ອມກັບ Telegram ແລ້ວ. ລາຍງານ ແລະ ແຈ້ງເຕືອນຈະມາທາງນີ້.")
+    print(f"Saved TELEGRAM_CHAT_ID={chat_id} to .env and sent a test message.")
+    return 0
+
+
+def cmd_ai_check(s: Settings, args: argparse.Namespace) -> int:
+    from trading_ai.ai.claude import AIError, check_connection
+    if s.ai_provider != "anthropic":
+        print(f"AI provider '{s.ai_provider}' is not implemented yet")
+        return 1
+    try:
+        reply = check_connection(s.ai_model)
+    except AIError as e:
+        print(f"AI check FAILED: {e}")
+        return 1
+    print(f"AI check OK ({s.ai_model}): {reply}")
+    return 0
+
+
+def cmd_notify(s: Settings, args: argparse.Namespace) -> int:
+    text = " ".join(args.text)
+    if not telegram.notify(text):
+        print("Telegram not configured; message was:", text)
+    return 0
+
+
+def _heartbeat(mt5) -> tuple[dict | None, float | None, bool]:
+    paths = term.terminal_paths(mt5)
+    hb = term.read_heartbeat(paths)
+    age = (time.time() - paths.heartbeat.stat().st_mtime) / 60 if hb is not None else None
+    return hb, age, paths.kill_switch.exists()
+
+
+def cmd_report(s: Settings, args: argparse.Namespace) -> int:
+    since = pd.Timestamp(FORWARD_SINCE, tz="UTC")
+    with mt5_session(s.terminal_path) as mt5:
+        account = account_summary(mt5)
+        login = str(account["login"])
+        positions = [position_dict(p, s.internal_symbol) for p in open_positions(mt5)]
+        hb, age, kill = _heartbeat(mt5)
+        cmp, _ = _forward_compare(s, mt5, login, "rsi2_reversion", since)
+    with Journal(s.journal_db) as journal:
+        _enrich_all(s, journal)
+        trades = journal.trades_df()
+    trades = trades[trades["account"] == login]
+    forward = summarize_check(cmp) if not cmp.empty else None
+    facts = build_facts(args.period, account, hb, age, kill, positions, trades, forward)
+    text = render_plain(facts)
+    if not args.no_ai:
+        from trading_ai.ai.claude import AIError, write_commentary
+        try:
+            text += "\n\n🤖 " + write_commentary(facts, args.period, s.ai_model, s.ai_effort)
+        except AIError as e:
+            text += f"\n\n(AI commentary unavailable: {e})"
+    out = s.project_root / "reports" / f"report_{args.period}_{datetime.now():%Y-%m-%d}.txt"
+    out.parent.mkdir(exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    print(text)
+    if not args.no_send and not telegram.notify(text):
+        print("\n(Telegram not configured: run telegram-setup to receive reports on your phone)")
+    return 0
+
+
+def _load_state(path) -> dict:
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def cmd_watchdog(s: Settings, args: argparse.Namespace) -> int:
+    """Run every few minutes: alert on problems, new and closed trades."""
+    state_path = s.data_dir / "watchdog_state.json"
+    state = _load_state(state_path)
+    first_run = not state
+    messages, problems = [], []
+    try:
+        with mt5_session(s.terminal_path) as mt5:
+            account = account_summary(mt5)
+            login = str(account["login"])
+            positions = [position_dict(p, s.internal_symbol) for p in open_positions(mt5)]
+            hb, age, kill = _heartbeat(mt5)
+            deals, orders = fetch_history(mt5, datetime.now(timezone.utc) - timedelta(days=3))
+    except MT5Error as e:
+        problems.append(f"MT5 ເຊື່ອມຕໍ່ບໍ່ໄດ້: {e}")
+    else:
+        if hb is None:
+            problems.append("RiskGuard ບໍ່ເຮັດວຽກ (ບໍ່ມີ heartbeat). ກວດ chart ແລະ ປຸ່ມ Algo Trading")
+        elif age is not None and age > args.stale_minutes:
+            problems.append(f"RiskGuard ບໍ່ອັບເດດມາ {age:.0f} ນາທີ: EA ຖືກປິດ ຫຼື MT5 ຄ້າງ?")
+        elif hb.get("state") != "STATE_OK":
+            problems.append(f"RiskGuard: {hb.get('state')}. daily P&L {hb.get('daily_pnl')}")
+        if kill:
+            problems.append("Kill switch ເປີດຢູ່: ການເທຣດຖືກບລັອກ")
+
+        known_open = set(state.get("open_tickets", []))
+        for p in positions:
+            if p["ticket"] not in known_open and not first_run:
+                messages.append(f"🟢 ເປີດອໍເດີ {p['symbol']} {p['direction']} {p['volume']} lot @ {p['open_price']}, SL {p['sl']}")
+        state["open_tickets"] = [p["ticket"] for p in positions]
+
+        result = trades_from_history(deals, orders, login, s.server_timezone, s.internal_symbol)
+        with Journal(s.journal_db) as journal:
+            journal.insert_trades(result.trades)
+        notified = set(state.get("closed_positions", []))
+        for t in result.trades:
+            if t.position_id not in notified and not first_run:
+                icon = "✅" if t.net_profit > 0 else "🔻"
+                r = f", {t.r_multiple:+.2f}R" if t.r_multiple is not None else ""
+                messages.append(f"{icon} ປິດອໍເດີ {t.symbol} {t.direction}: {t.net_profit:+.2f} {account.get('currency', '')}{r} ({t.exit_reason})")
+            notified.add(t.position_id)
+        state["closed_positions"] = sorted(notified)[-500:]
+
+    problem_text = "\n".join(problems)
+    now = time.time()
+    if problems and (problem_text != state.get("last_problem") or now - state.get("last_problem_time", 0) > 6 * 3600):
+        messages.insert(0, "⚠️ " + problem_text)
+        state["last_problem"], state["last_problem_time"] = problem_text, now
+    elif not problems and state.get("last_problem"):
+        messages.insert(0, "✅ ບັນຫາຫາຍແລ້ວ: ລະບົບກັບມາປົກກະຕິ")
+        state["last_problem"] = ""
+    if first_run:
+        messages.append("👀 Watchdog ເລີ່ມເຮັດວຽກ: ຈະແຈ້ງເມື່ອມີອໍເດີເປີດ ຫຼື ປິດ ແລະ ເມື່ອມີບັນຫາ")
+
+    s.data_dir.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state))
+    for msg in messages:
+        print(msg)
+        telegram.notify(msg)
+    return 1 if problems else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -490,7 +648,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     fc = sub.add_parser("forward-check", help="compare the EA's live trades with the backtest")
     fc.add_argument("--strategy", default="rsi2_reversion", choices=list(STRATEGIES))
-    fc.add_argument("--since", default="2026-09-28", help="forward test start date (YYYY-MM-DD)")
+    fc.add_argument("--since", default=FORWARD_SINCE, help="forward test start date (YYYY-MM-DD)")
     fc.add_argument("--symbols", nargs="+")
     fc.set_defaults(func=cmd_forward_check)
 
@@ -499,6 +657,20 @@ def build_parser() -> argparse.ArgumentParser:
     ob.add_argument("--risk", type=float, default=1.0)
     ob.add_argument("--compare", action="store_true", help="also run without trailing / break-even")
     ob.set_defaults(func=cmd_backtest_orb)
+
+    sub.add_parser("telegram-setup", help="find your Telegram chat id and send a test message").set_defaults(func=cmd_telegram_setup)
+    sub.add_parser("ai-check", help="test the Claude API key and model").set_defaults(func=cmd_ai_check)
+    nt = sub.add_parser("notify", help="send a Telegram message")
+    nt.add_argument("text", nargs="+")
+    nt.set_defaults(func=cmd_notify)
+    rp = sub.add_parser("report", help="build a daily/weekly report, with AI commentary, and send it to Telegram")
+    rp.add_argument("--period", choices=["daily", "weekly"], default="daily")
+    rp.add_argument("--no-ai", action="store_true")
+    rp.add_argument("--no-send", action="store_true")
+    rp.set_defaults(func=cmd_report)
+    wd = sub.add_parser("watchdog", help="check MT5/RiskGuard and notify new or closed trades (run on a schedule)")
+    wd.add_argument("--stale-minutes", type=float, default=10.0)
+    wd.set_defaults(func=cmd_watchdog)
 
     ie = sub.add_parser("install-ea", help="copy our EAs into MT5 and compile them")
     ie.add_argument("--no-compile", action="store_true")
@@ -513,7 +685,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         settings = load_settings(args.config)
+        load_env(settings.env_path)
         return args.func(settings, args)
+    except telegram.TelegramError as e:
+        print(f"Telegram error: {e}", file=sys.stderr)
+        return 2
     except (ConfigError, MT5Error) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
