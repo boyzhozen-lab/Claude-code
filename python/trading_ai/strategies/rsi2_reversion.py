@@ -25,7 +25,7 @@ class RSI2Reversion(Strategy):
         "exit_len": [3, 5, 10],
     }
     max_bars = 10
-    default_symbols = ("SPX500", "NAS100", "DOW30")
+    default_symbols = ("SPX500", "NAS100", "DOW30", "GER40", "UK100", "JP225", "AUS200", "FRA40", "EU50", "HK50")
 
     def signals(self, bars: pd.DataFrame) -> pd.DataFrame:
         p = self.params

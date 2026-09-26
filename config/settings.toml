@@ -20,6 +20,14 @@ DOW30 = "US30m"
 EURUSD = "EURUSDm"
 GBPUSD = "GBPUSDm"
 USDJPY = "USDJPYm"
+# More indices for the RSI2 mean-reversion strategy
+GER40 = "DE30m"
+UK100 = "UK100m"
+JP225 = "JP225m"
+AUS200 = "AUS200m"
+FRA40 = "FR40m"
+EU50 = "STOXX50m"
+HK50 = "HK50m"
 
 [download]
 timeframes = ["M15", "H1", "D1"]
@@ -43,6 +51,14 @@ DOW30 = 3.0
 EURUSD = 0.00012
 GBPUSD = 0.00018
 USDJPY = 0.018
+# rough, deliberately pessimistic; replace with real spreads when known
+GER40 = 3.0
+UK100 = 2.0
+JP225 = 15.0
+AUS200 = 3.0
+FRA40 = 2.5
+EU50 = 3.0
+HK50 = 15.0
 
 # Challenge rules in % of the initial balance. Check the firm's current rules
 # before paying for a challenge; they change.
