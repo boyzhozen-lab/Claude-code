@@ -1,0 +1,3 @@
+*.bat text eol=crlf
+*.mq5 text eol=crlf
+*.mqh text eol=crlf
