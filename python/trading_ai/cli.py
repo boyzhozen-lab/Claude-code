@@ -11,6 +11,7 @@ import pandas as pd
 from trading_ai.backtest.challenge import simulate
 from trading_ai.backtest.engine import run_backtest, trades_frame
 from trading_ai.backtest.metrics import daily_r, performance
+from trading_ai.backtest.orb import OrbParams, orb_backtest
 from trading_ai.backtest.walkforward import walk_forward
 from trading_ai.config import ConfigError, Settings, load_settings
 from trading_ai.data import bars as barstore
@@ -323,6 +324,48 @@ def cmd_guard_status(s: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backtest_orb(s: Settings, args: argparse.Namespace) -> int:
+    """USTEC_ORB_EA v1.6 rules on M5 history."""
+    m5_path = barstore.bars_path(s.bars_dir, args.symbol, "M5")
+    d1_path = barstore.bars_path(s.bars_dir, args.symbol, "D1")
+    if not m5_path.exists():
+        print(f"No M5 data for {args.symbol}. Run: python -m trading_ai fetch-bars --symbols {args.symbol} --timeframes M5 D1")
+        return 1
+    m5 = barstore.load_bars(m5_path)
+    d1 = barstore.load_bars(d1_path) if d1_path.exists() else None
+    spec = symspecs.load_specs(s.specs_path).get(args.symbol, {})
+    point = float(spec.get("point") or 0.01)
+    cost = s.costs.get(args.symbol, 0.0)
+    variants = {"EA v1.6 as configured": OrbParams(point=point)}
+    if args.compare:
+        variants["no trailing (BE only)"] = OrbParams(point=point, use_trail=False)
+        variants["no trailing, no BE (SL/TP/11:00 only)"] = OrbParams(point=point, use_trail=False, be_rr=1e9)
+    print(f"{args.symbol} M5 {m5['time'].iloc[0]:%Y-%m-%d} -> {m5['time'].iloc[-1]:%Y-%m-%d}, "
+          f"point {point}, cost {cost} per trade, risk {args.risk}% per trade")
+    last = None
+    for title, params in variants.items():
+        trades = trades_frame(orb_backtest(m5, d1, args.symbol, cost, params))
+        _print_performance(title.upper(), trades, args.risk)
+        if trades.empty:
+            continue
+        print("  exits: " + ", ".join(f"{k} {v}" for k, v in trades["exit_reason"].value_counts().items()))
+        by_year = trades.groupby(trades["entry_time"].dt.year)["r"].agg(["count", "sum", "mean"])
+        print("  by year:  " + "  ".join(f"{y}: {int(row['count'])}tr {row['sum']:+.1f}R" for y, row in by_year.iterrows()))
+        last = last if last is not None else trades
+    if last is not None and len(last) >= 30:
+        days = daily_r(last).to_numpy()
+        p1, p2 = s.challenge["phase1"], s.challenge["phase2"]
+        print("\nChallenge simulation (EA as configured):")
+        print(f"{'risk/trade':>10} {'P1 pass':>8} {'daily fail':>10} {'total fail':>10} {'no result':>9} {'median days':>11} {'both':>6}")
+        for risk in (0.5, 1.0):
+            r1 = simulate(days, risk, p1, runs=10_000)
+            r2 = simulate(days, risk, p2, runs=10_000, seed=1)
+            print(f"{risk:>9.2f}% {r1.pass_rate:>8.0%} {r1.fail_daily:>10.0%} {r1.fail_total:>10.0%} "
+                  f"{r1.unresolved:>9.0%} {r1.median_days:>11.0f} {r1.pass_rate * r2.pass_rate:>6.0%}")
+    print("\nNote: fixed EA parameters (not walk-forward). If they were tuned on this same period, results are optimistic.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="trading_ai", description="Trading AI tools")
     p.add_argument("--config", help="path to settings.toml (default: config/settings.toml)")
@@ -371,6 +414,12 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("--runs", type=int, default=10_000)
     ch.add_argument("--seed", type=int, default=0)
     ch.set_defaults(func=cmd_challenge)
+
+    ob = sub.add_parser("backtest-orb", help="backtest USTEC_ORB_EA v1.6 rules on M5 data")
+    ob.add_argument("--symbol", default="NAS100")
+    ob.add_argument("--risk", type=float, default=1.0)
+    ob.add_argument("--compare", action="store_true", help="also run without trailing / break-even")
+    ob.set_defaults(func=cmd_backtest_orb)
 
     ie = sub.add_parser("install-ea", help="copy our EAs into MT5 and compile them")
     ie.add_argument("--no-compile", action="store_true")
