@@ -9,12 +9,18 @@ if not exist .venv\Scripts\activate.bat (
 )
 call .venv\Scripts\activate.bat
 if not exist reports mkdir reports
-echo Backtesting all strategies (walk-forward) and simulating FTMO challenges...
+echo Backtesting (walk-forward) and simulating FTMO challenges...
 set STRATS=trend_breakout rsi2_reversion london_breakout ny_breakout
-python -m trading_ai backtest --strategy %STRATS% --walk-forward > reports\3_backtest.txt 2>&1
-echo. >> reports\3_backtest.txt
-python -m trading_ai challenge --strategy %STRATS% --walk-forward >> reports\3_backtest.txt 2>&1
-type reports\3_backtest.txt
+set OUT=reports\3_backtest.txt
+echo ===== A. ALL STRATEGIES ===== > %OUT%
+python -m trading_ai backtest --strategy %STRATS% --walk-forward >> %OUT% 2>&1
+echo. >> %OUT%
+echo ===== B. RSI2 REVERSION ONLY (indices) ===== >> %OUT%
+python -m trading_ai challenge --strategy rsi2_reversion --walk-forward --risks 0.5 0.75 1.0 1.5 2.0 >> %OUT% 2>&1
+echo. >> %OUT%
+echo ===== C. TREND BREAKOUT ON GOLD (long history) ===== >> %OUT%
+python -m trading_ai backtest --strategy trend_breakout --symbols GOLD --walk-forward >> %OUT% 2>&1
+type %OUT%
 echo.
-echo Saved to reports\3_backtest.txt  - send this file to Claude.
+echo Saved to %OUT%  - send this file to Claude.
 pause

@@ -8,7 +8,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-SymbolInfo = namedtuple("SymbolInfo", "name visible digits spread")
+SymbolInfo = namedtuple("SymbolInfo", "name visible digits spread path description point swap_mode swap_long swap_short swap_rollover3days trade_contract_size currency_profit",
+                        defaults=("Metals\\XAUUSDm", "Gold", 0.001, 1, -300.0, 100.0, 3, 100.0, "USD"))
 AccountInfo = namedtuple("AccountInfo", "login server name currency balance equity leverage trade_mode")
 Deal = namedtuple("Deal", "ticket order time time_msc type entry magic position_id reason volume price commission swap profit fee symbol comment")
 Order = namedtuple("Order", "ticket time_setup time_setup_msc position_id sl tp symbol")
@@ -51,6 +52,9 @@ class FakeMT5(types.ModuleType):
 
     def symbol_info(self, name):
         return self.symbols.get(name)
+
+    def symbols_get(self, group="*"):
+        return tuple(self.symbols.values())
 
     def symbol_select(self, name, enable):
         return True

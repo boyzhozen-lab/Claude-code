@@ -49,5 +49,6 @@ def performance(trades: pd.DataFrame, risk_pct: float) -> dict[str, float]:
         "max_dd_pct": float((peak - equity).max()),
         "worst_day_pct": float(d.min()),
         "losing_streak": _longest_losing_streak(r),
+        "swap_r": float(t["swap_r"].sum()) if "swap_r" in t else 0.0,
         "years": years,
     }

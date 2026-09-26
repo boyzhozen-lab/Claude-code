@@ -5,7 +5,9 @@ Rules, chosen to be conservative rather than flattering:
 - A stop that the market gaps through fills at the (worse) open price.
 - If the stop and the target are both inside one bar, the stop is assumed hit first.
 - Costs (spread + commission + slippage, round trip, in price units) are
-  subtracted from every trade. Swap/financing is NOT modelled.
+  subtracted from every trade.
+- Overnight swap is charged per weekday rollover held (triple on the broker's
+  triple-swap day), when swap rates are given.
 """
 
 from __future__ import annotations
@@ -33,7 +35,8 @@ class BacktestTrade:
     exit_reason: str       # sl | tp | signal | time | end
     bars_held: int
     gross_r: float
-    r: float               # after costs
+    swap_r: float          # overnight financing, in R (negative = paid)
+    r: float               # after costs and swap
     mae_r: float
     mfe_r: float
 
@@ -51,7 +54,25 @@ class _Open:
     mfe: float = 0.0
 
 
-def run_backtest(bars: pd.DataFrame, strategy: Strategy, symbol: str, cost: float = 0.0) -> list[BacktestTrade]:
+def nights_held(entry: pd.Timestamp, exit_: pd.Timestamp, triple_weekday: int = 2) -> int:
+    """Swap nights between two times: one per weekday rollover (midnight UTC),
+    three on the triple-swap weekday, none on Saturday/Sunday."""
+    first, last = entry.normalize(), exit_.normalize()
+    if last <= first:
+        return 0
+    days = pd.date_range(first, last - pd.Timedelta(days=1), freq="D")
+    return int(sum(3 if d.weekday() == triple_weekday else 1 for d in days if d.weekday() < 5))
+
+
+def run_backtest(
+    bars: pd.DataFrame,
+    strategy: Strategy,
+    symbol: str,
+    cost: float = 0.0,
+    swap_long: float = 0.0,     # price units per night, positive = received
+    swap_short: float = 0.0,
+    triple_weekday: int = 2,
+) -> list[BacktestTrade]:
     bars = bars.reset_index(drop=True)
     sig = strategy.signals(bars)
     o, h, l, c = (bars[k].to_numpy(float) for k in ("open", "high", "low", "close"))
@@ -68,6 +89,8 @@ def run_backtest(bars: pd.DataFrame, strategy: Strategy, symbol: str, cost: floa
         nonlocal pos
         assert pos is not None
         move = pos.direction * (price - pos.entry)
+        nightly = swap_long if pos.direction > 0 else swap_short
+        swap = nightly * nights_held(times[pos.entry_i], times[i], triple_weekday) if nightly else 0.0
         mae = max(pos.mae, -move)
         mfe = max(pos.mfe, move)
         trades.append(BacktestTrade(
@@ -76,7 +99,7 @@ def run_backtest(bars: pd.DataFrame, strategy: Strategy, symbol: str, cost: floa
             entry_time=times[pos.entry_i], exit_time=times[i],
             entry_price=pos.entry, exit_price=price, stop_price=pos.stop, target_price=pos.target,
             stop_dist=pos.dist, exit_reason=reason, bars_held=pos.bars,
-            gross_r=move / pos.dist, r=(move - cost) / pos.dist,
+            gross_r=move / pos.dist, swap_r=swap / pos.dist, r=(move - cost + swap) / pos.dist,
             mae_r=max(mae, 0.0) / pos.dist, mfe_r=max(mfe, 0.0) / pos.dist,
         ))
         pos = None

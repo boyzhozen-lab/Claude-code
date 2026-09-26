@@ -25,6 +25,7 @@ class Settings:
     symbols: dict[str, str]  # internal name -> broker symbol
     timeframes: list[str]
     history_years: int
+    history_years_d1: int
     data_dir: Path
     journal_db: Path
     costs: dict[str, float] = field(default_factory=dict)  # round-trip, price units
@@ -33,6 +34,10 @@ class Settings:
     @property
     def bars_dir(self) -> Path:
         return self.data_dir / "bars"
+
+    @property
+    def specs_path(self) -> Path:
+        return self.data_dir / "symbols.json"
 
     def broker_symbol(self, internal: str) -> str:
         try:
@@ -78,6 +83,7 @@ def load_settings(path: Path | str | None = None) -> Settings:
         symbols=dict(symbols),
         timeframes=list(download.get("timeframes", ["M15", "H1", "D1"])),
         history_years=int(download.get("years", 5)),
+        history_years_d1=int(download.get("years_d1", download.get("years", 5))),
         data_dir=resolve(paths.get("data_dir", "data")),
         journal_db=resolve(paths.get("journal_db", "data/journal.db")),
         costs={k: float(v) for k, v in raw.get("costs", {}).items()},

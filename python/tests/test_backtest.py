@@ -245,3 +245,34 @@ def test_ny_breakout_uses_us_open_range():
     sig = NYBreakout().signals(rows)
     assert sig.loc[16, "long_entry"] and sig["long_entry"].sum() == 1
     assert sig.loc[16, "stop_dist"] == pytest.approx(4.0)
+
+
+def test_nights_held_counts_weekday_rollovers_with_triple_wednesday():
+    from trading_ai.backtest.engine import nights_held
+    ts = lambda s: pd.Timestamp(s, tz="UTC")
+    assert nights_held(ts("2024-03-04 10:00"), ts("2024-03-04 20:00")) == 0   # same day
+    assert nights_held(ts("2024-03-04 10:00"), ts("2024-03-05 10:00")) == 1   # Mon night
+    assert nights_held(ts("2024-03-06 10:00"), ts("2024-03-07 10:00")) == 3   # Wed = triple
+    assert nights_held(ts("2024-03-08 10:00"), ts("2024-03-11 10:00")) == 1   # Fri -> Mon
+    assert nights_held(ts("2024-03-04 10:00"), ts("2024-03-11 10:00")) == 7   # full week
+
+
+def test_swap_is_charged_in_r():
+    bars = ohlc([FLAT, FLAT, FLAT, FLAT, FLAT], start="2024-03-04")  # Mon..Fri
+    [t] = run_backtest(bars, Scripted(entries=[0], exits=[2]), "X", swap_long=-0.5)
+    # entry Tue open, exit Thu open: Tue night (1) + Wed night (3) = 4 nights x -0.5 = -2.0
+    assert t.swap_r == pytest.approx(-2.0 / 5)
+    assert t.r == pytest.approx(t.gross_r - 0.4)
+
+
+def test_swap_spec_conversion():
+    from trading_ai.data.specs import swap_per_night, triple_swap_weekday
+    points = {"swap_mode": 1, "swap_long": -300.0, "swap_short": 100.0, "point": 0.001}
+    assert swap_per_night(points, 2000.0)[:2] == pytest.approx((-0.3, 0.1))
+    money = {"swap_mode": 4, "swap_long": -5.0, "swap_short": 1.0, "trade_contract_size": 100.0,
+             "currency_profit": "USD", "deposit_currency": "USD"}
+    assert swap_per_night(money, 2000.0)[:2] == pytest.approx((-0.05, 0.01))
+    interest = {"swap_mode": 5, "swap_long": -3.6, "swap_short": 0.0}
+    assert swap_per_night(interest, 5000.0)[0] == pytest.approx(-0.5)
+    assert swap_per_night({"swap_mode": 2, "swap_long": -1.0, "swap_short": 0.0}, 1.0)[2] is not None
+    assert triple_swap_weekday({"swap_rollover3days": 3}) == 2   # MT5 Wednesday -> Python 2

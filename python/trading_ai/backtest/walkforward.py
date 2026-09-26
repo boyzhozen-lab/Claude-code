@@ -46,6 +46,7 @@ def walk_forward(
     strategy_cls: type[Strategy],
     symbol: str,
     cost: float = 0.0,
+    swap: tuple[float, float, int] = (0.0, 0.0, 2),
     train_years: int = 3,
     test_years: int = 1,
     min_trades: int = 10,
@@ -54,7 +55,7 @@ def walk_forward(
     # equivalent to re-running each window separately (and much faster).
     runs = []
     for params in param_combos(strategy_cls):
-        runs.append((params, trades_frame(run_backtest(bars, strategy_cls(**params), symbol, cost))))
+        runs.append((params, trades_frame(run_backtest(bars, strategy_cls(**params), symbol, cost, *swap))))
 
     first, last = bars["time"].iloc[0], bars["time"].iloc[-1]
     result = WalkForwardResult(oos_trades=trades_frame([]))

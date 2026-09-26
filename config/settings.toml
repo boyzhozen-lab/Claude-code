@@ -24,6 +24,8 @@ USDJPY = "USDJPYm"
 [download]
 timeframes = ["M15", "H1", "D1"]
 years = 5
+# Daily bars are small: fetch more history so walk-forward has more test years.
+years_d1 = 20
 
 [paths]
 # Relative paths are resolved from the project root.

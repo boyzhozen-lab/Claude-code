@@ -136,3 +136,26 @@ def test_install_ea_kill_resume_and_status(fake_mt5, config_file, tmp_path, caps
     assert "STATE_KILL" in out and "kill switch        ON" in out
     assert main(cfg + ["resume"]) == 0
     assert not (files / "kill_switch").exists()
+
+
+def test_fetch_saves_specs_skips_missing_and_backtest_charges_swap(fake_mt5, config_file, capsys):
+    import json
+    text = config_file.read_text().replace('GOLD = "XAUUSDm"', 'GOLD = "XAUUSDm"\nDAX = "DE40m"')
+    config_file.write_text(text)
+    cfg = ["--config", str(config_file)]
+    assert main(cfg + ["fetch-bars", "--timeframes", "D1", "--years", "3"]) == 1   # DAX missing
+    out = capsys.readouterr().out
+    assert "DAX: skipped" in out and "GOLD D1" in out
+    specs = json.loads((config_file.parent.parent / "data" / "symbols.json").read_text())
+    assert specs["GOLD"]["swap_long"] == -300.0 and specs["GOLD"]["deposit_currency"] == "USD"
+
+    assert main(cfg + ["backtest", "--strategy", "rsi2_reversion", "--symbols", "GOLD", "--timeframe", "D1"]) in (0, 1)
+    assert "no swap rates" not in capsys.readouterr().out
+
+
+def test_list_symbols(fake_mt5, config_file, capsys):
+    assert main(["--config", str(config_file), "list-symbols", "metals"]) == 0
+    out = capsys.readouterr().out
+    assert "XAUUSDm" in out and "1 symbol(s)" in out
+    assert main(["--config", str(config_file), "list-symbols", "indices"]) == 0
+    assert "0 symbol(s)" in capsys.readouterr().out

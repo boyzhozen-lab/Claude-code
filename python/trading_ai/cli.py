@@ -14,6 +14,7 @@ from trading_ai.backtest.metrics import daily_r, performance
 from trading_ai.backtest.walkforward import walk_forward
 from trading_ai.config import ConfigError, Settings, load_settings
 from trading_ai.data import bars as barstore
+from trading_ai.data import specs as symspecs
 from trading_ai.data import terminal as term
 from trading_ai.data.mt5_client import MT5Error, account_summary, ensure_symbol, fetch_history, fetch_rates, mt5_session
 from trading_ai.journal.db import Journal
@@ -45,19 +46,39 @@ def cmd_fetch_bars(s: Settings, args: argparse.Namespace) -> int:
     symbols = args.symbols or list(s.symbols)
     timeframes = args.timeframes or s.timeframes
     end = datetime.now(timezone.utc)
-    start = end - timedelta(days=365 * (args.years or s.history_years))
+    specs, missing = {}, []
     with mt5_session(s.terminal_path) as mt5:
+        deposit = account_summary(mt5)["currency"]
         for internal in symbols:
             broker = s.broker_symbol(internal)
+            try:
+                specs[internal] = symspecs.spec_from_info(ensure_symbol(mt5, broker), deposit)
+            except MT5Error as e:
+                missing.append(internal)
+                print(f"  {internal}: skipped, {e}")
+                continue
             for tf in timeframes:
-                raw = fetch_rates(mt5, broker, tf, start, end)
+                years = args.years or (s.history_years_d1 if tf == "D1" else s.history_years)
+                raw = fetch_rates(mt5, broker, tf, end - timedelta(days=round(365.25 * years)), end)
                 if raw.empty:
                     print(f"  {internal} {tf}: no data returned")
                     continue
                 path = barstore.bars_path(s.bars_dir, internal, tf)
                 df = barstore.save_bars(barstore.normalize_rates(raw, s.server_timezone), path)
                 print(f"  {internal} {tf}: {len(df):>7} bars  {df['time'].iloc[0]:%Y-%m-%d} -> {df['time'].iloc[-1]:%Y-%m-%d}")
-    print(f"Saved to {s.bars_dir}")
+    symspecs.save_specs(s.specs_path, specs)
+    print(f"Saved to {s.bars_dir} (symbol specs incl. swap rates: {s.specs_path.name})")
+    return 1 if missing else 0
+
+
+def cmd_list_symbols(s: Settings, args: argparse.Namespace) -> int:
+    with mt5_session(s.terminal_path) as mt5:
+        needle = args.pattern.lower()
+        found = [i for i in (mt5.symbols_get() or ())
+                 if needle in f"{i.name} {i.path} {i.description}".lower()]
+        for info in sorted(found, key=lambda i: i.path):
+            print(f"  {info.name:<16} {info.path:<40} {info.description}")
+    print(f"{len(found)} symbol(s)")
     return 0
 
 
@@ -134,6 +155,17 @@ def cmd_stats(s: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _swap_for(s: Settings, internal: str, price: float) -> tuple[float, float, int]:
+    spec = symspecs.load_specs(s.specs_path).get(internal)
+    if spec is None:
+        print(f"  warning: no swap rates for {internal} (run fetch-bars), swap not charged")
+        return 0.0, 0.0, 2
+    long_, short_, warning = symspecs.swap_per_night(spec, price)
+    if warning:
+        print(f"  warning: {internal}: {warning}")
+    return long_, short_, symspecs.triple_swap_weekday(spec)
+
+
 def _collect_backtest_trades(s: Settings, args: argparse.Namespace) -> pd.DataFrame:
     """Run every strategy on every symbol; return all trades (walk-forward OOS if asked)."""
     parts = []
@@ -148,13 +180,14 @@ def _collect_backtest_trades(s: Settings, args: argparse.Namespace) -> pd.DataFr
                 print(f"  {name} {internal}: no {timeframe} data, run fetch-bars first")
                 continue
             bars = barstore.load_bars(path)
+            swap = _swap_for(s, internal, float(bars["close"].iloc[-1]))
             cost = s.costs.get(internal)
             if cost is None:
                 print(f"  warning: no [costs] entry for {internal}, assuming zero cost")
                 cost = 0.0
             if args.walk_forward:
                 try:
-                    wf = walk_forward(bars, cls, internal, cost)
+                    wf = walk_forward(bars, cls, internal, cost, swap)
                 except ValueError as e:
                     print(f"  {name} {internal}: {e}")
                     continue
@@ -165,7 +198,7 @@ def _collect_backtest_trades(s: Settings, args: argparse.Namespace) -> pd.DataFr
                 trades = wf.oos_trades
             else:
                 try:
-                    trades = trades_frame(run_backtest(bars, cls(), internal, cost))
+                    trades = trades_frame(run_backtest(bars, cls(), internal, cost, *swap))
                 except ValueError as e:
                     print(f"  {name} {internal}: {e}")
                     continue
@@ -179,7 +212,7 @@ PERF_FORMAT = {
     "trades": "{:.0f}", "trades_per_year": "{:.1f}", "win_rate": "{:.0%}", "avg_r": "{:+.2f}",
     "profit_factor": "{:.2f}", "total_r": "{:+.1f}", "return_pct": "{:+.1f}%",
     "return_pct_per_year": "{:+.1f}%", "max_dd_pct": "{:.1f}%", "worst_day_pct": "{:+.1f}%",
-    "losing_streak": "{:.0f}", "years": "{:.1f}",
+    "losing_streak": "{:.0f}", "swap_r": "{:+.1f}R", "years": "{:.1f}",
 }
 
 
@@ -198,7 +231,7 @@ def cmd_backtest(s: Settings, args: argparse.Namespace) -> int:
     if trades.empty:
         print("No trades.")
         return 1
-    print(f"\nRisk per trade: {args.risk}% of initial balance. Swap/financing costs are NOT included.")
+    print(f"\nRisk per trade: {args.risk}% of initial balance. Costs and overnight swap included.")
     for (strategy, symbol), group in trades.groupby(["strategy", "symbol"]):
         _print_performance(f"{strategy} on {symbol}", group, args.risk)
     if trades.groupby(["strategy", "symbol"]).ngroups > 1:
@@ -302,6 +335,10 @@ def build_parser() -> argparse.ArgumentParser:
     fb.add_argument("--timeframes", nargs="+", help="e.g. M15 H1 D1")
     fb.add_argument("--years", type=int)
     fb.set_defaults(func=cmd_fetch_bars)
+
+    ls = sub.add_parser("list-symbols", help="find broker symbols by name/group/description, e.g. list-symbols indices")
+    ls.add_argument("pattern", nargs="?", default="")
+    ls.set_defaults(func=cmd_list_symbols)
 
     sub.add_parser("validate-bars", help="check downloaded bars for gaps and bad data").set_defaults(func=cmd_validate_bars)
 
