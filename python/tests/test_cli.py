@@ -111,3 +111,28 @@ def test_mixed_daily_and_hourly_strategies(config_file, capsys):
 
     assert main(cfg + ["backtest", "--strategy", "london_breakout", "--timeframe", "D1"]) == 1
     assert "needs H1" in capsys.readouterr().out
+
+
+def test_install_ea_kill_resume_and_status(fake_mt5, config_file, tmp_path, capsys):
+    import json
+    fake_mt5.data_path = str(tmp_path / "terminal_data")
+    fake_mt5.install_path = str(tmp_path / "terminal_install")   # no metaeditor here
+    cfg = ["--config", str(config_file)]
+
+    assert main(cfg + ["install-ea", "--no-compile"]) == 0
+    assert (tmp_path / "terminal_data" / "MQL5" / "Experts" / "TradingAI" / "RiskGuard.mq5").exists()
+
+    assert main(cfg + ["install-ea"]) == 1
+    assert "MetaEditor not found" in capsys.readouterr().out
+
+    files = tmp_path / "terminal_data" / "MQL5" / "Files" / "trading_ai"
+    assert main(cfg + ["guard-status"]) == 1
+    assert main(cfg + ["kill"]) == 0
+    assert (files / "kill_switch").exists()
+    (files / "heartbeat.json").write_text(json.dumps({"state": "STATE_KILL", "equity": 9950.0}))
+    capsys.readouterr()
+    assert main(cfg + ["guard-status"]) == 0
+    out = capsys.readouterr().out
+    assert "STATE_KILL" in out and "kill switch        ON" in out
+    assert main(cfg + ["resume"]) == 0
+    assert not (files / "kill_switch").exists()

@@ -14,6 +14,7 @@ from trading_ai.backtest.metrics import daily_r, performance
 from trading_ai.backtest.walkforward import walk_forward
 from trading_ai.config import ConfigError, Settings, load_settings
 from trading_ai.data import bars as barstore
+from trading_ai.data import terminal as term
 from trading_ai.data.mt5_client import MT5Error, account_summary, ensure_symbol, fetch_history, fetch_rates, mt5_session
 from trading_ai.journal.db import Journal
 from trading_ai.journal.enrich import Enricher
@@ -232,6 +233,63 @@ def cmd_challenge(s: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_install_ea(s: Settings, args: argparse.Namespace) -> int:
+    with mt5_session(s.terminal_path) as mt5:
+        paths = term.terminal_paths(mt5)
+    installed = term.install_experts(paths)
+    if not installed:
+        print("No .mq5 files found in the mql5 folder")
+        return 1
+    failed = 0
+    for mq5 in installed:
+        print(f"Copied {mq5.name} -> {mq5.parent}")
+        if args.no_compile:
+            continue
+        ok, log = term.compile_expert(paths, mq5)
+        print(f"  compile: {'OK' if ok else 'FAILED'}")
+        if not ok:
+            failed += 1
+            print(log)
+    if not failed:
+        print("\nIn MT5: Navigator (Ctrl+N) > Expert Advisors > TradingAI (right-click > Refresh if missing).")
+    return 1 if failed else 0
+
+
+def cmd_kill(s: Settings, args: argparse.Namespace) -> int:
+    with mt5_session(s.terminal_path) as mt5:
+        paths = term.terminal_paths(mt5)
+    paths.files.mkdir(parents=True, exist_ok=True)
+    paths.kill_switch.write_text("created by trading_ai kill\n")
+    print("KILL SWITCH ON: RiskGuard will close all positions and block new ones within seconds.")
+    print("Undo with: python -m trading_ai resume")
+    return 0
+
+
+def cmd_resume(s: Settings, args: argparse.Namespace) -> int:
+    with mt5_session(s.terminal_path) as mt5:
+        paths = term.terminal_paths(mt5)
+    if paths.kill_switch.exists():
+        paths.kill_switch.unlink()
+        print("Kill switch removed. Trading allowed again (daily/max-loss locks still apply).")
+    else:
+        print("Kill switch was not on.")
+    return 0
+
+
+def cmd_guard_status(s: Settings, args: argparse.Namespace) -> int:
+    with mt5_session(s.terminal_path) as mt5:
+        paths = term.terminal_paths(mt5)
+    hb = term.read_heartbeat(paths)
+    if hb is None:
+        print("No heartbeat yet: is RiskGuard attached to a chart with Algo Trading enabled?")
+        return 1
+    for key, value in hb.items():
+        print(f"  {key:<18} {value}")
+    if paths.kill_switch.exists():
+        print("  kill switch        ON")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="trading_ai", description="Trading AI tools")
     p.add_argument("--config", help="path to settings.toml (default: config/settings.toml)")
@@ -276,6 +334,13 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("--runs", type=int, default=10_000)
     ch.add_argument("--seed", type=int, default=0)
     ch.set_defaults(func=cmd_challenge)
+
+    ie = sub.add_parser("install-ea", help="copy our EAs into MT5 and compile them")
+    ie.add_argument("--no-compile", action="store_true")
+    ie.set_defaults(func=cmd_install_ea)
+    sub.add_parser("kill", help="emergency: RiskGuard closes everything and blocks trading").set_defaults(func=cmd_kill)
+    sub.add_parser("resume", help="remove the kill switch").set_defaults(func=cmd_resume)
+    sub.add_parser("guard-status", help="show RiskGuard's latest heartbeat").set_defaults(func=cmd_guard_status)
     return p
 
 
