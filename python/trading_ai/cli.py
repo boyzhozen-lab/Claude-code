@@ -338,6 +338,7 @@ def cmd_backtest_orb(s: Settings, args: argparse.Namespace) -> int:
     cost = s.costs.get(args.symbol, 0.0)
     variants = {"EA v1.6 as configured": OrbParams(point=point)}
     if args.compare:
+        variants["EA v1.6, pessimistic trail (exit at 1R - trail)"] = OrbParams(point=point, trail_from_bar_high=False)
         variants["no trailing (BE only)"] = OrbParams(point=point, use_trail=False)
         variants["no trailing, no BE (SL/TP/11:00 only)"] = OrbParams(point=point, use_trail=False, be_rr=1e9)
     print(f"{args.symbol} M5 {m5['time'].iloc[0]:%Y-%m-%d} -> {m5['time'].iloc[-1]:%Y-%m-%d}, "

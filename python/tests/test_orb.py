@@ -89,3 +89,13 @@ def test_d1_bias_blocks_counter_trend_trades():
     assert orb_backtest(m5, falling, "NAS100", 0.0, params) == []
     rising = falling.assign(close=np.linspace(20000, 21000, 60))
     assert len(orb_backtest(m5, rising, "NAS100", 0.0, params)) == 1
+
+
+def test_pessimistic_trail_exits_at_break_even_trigger():
+    bars = {**RANGE, **BREAK_UP,
+            "09:40": (20030, 20085, 20028, 20082),
+            "09:45": (20082, 20100, 20060, 20095)}
+    [t] = orb_backtest(ny_day("2024-07-10", bars), None, "NAS100", 0.0,
+                       OrbParams(point=0.01, use_d1_filter=False, use_volume_filter=False, trail_from_bar_high=False))
+    assert t.exit_price == pytest.approx(20080.05 - 1.0)
+    assert t.r == pytest.approx((50.05 - 1.0) / 50.05)

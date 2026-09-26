@@ -50,6 +50,9 @@ class OrbParams:
     be_rr: float = 1.0
     use_trail: bool = True
     trail_pts: float = 100.0
+    # A trail tighter than normal tick noise is exited almost at once. False =
+    # pessimistic: exit at the break-even trigger minus the trail, never higher.
+    trail_from_bar_high: bool = True
     sl_buffer_pts: float = 5.0
     point: float = 0.01
 
@@ -150,6 +153,9 @@ def orb_backtest(m5: pd.DataFrame, d1: pd.DataFrame | None, symbol: str, cost: f
                 be_done = True
                 stop_f = max(stop_f, entry_f + p.point)
                 if p.use_trail and trail > 0:
+                    if not p.trail_from_bar_high:
+                        exit_i, exit_f, reason = j, max(open_f, be_f) - trail, "trail"
+                        break
                     # the bar's high came after the break-even level was crossed
                     stop_f = max(stop_f, hi_f - trail)
             elif be_done and p.use_trail and trail > 0:
