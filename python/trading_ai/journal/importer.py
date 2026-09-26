@@ -16,6 +16,9 @@ EXIT_REASONS = {0: "manual", 1: "manual", 2: "manual", 3: "expert", 4: "sl", 5: 
 
 _VOLUME_EPS = 1e-9
 
+# Magic numbers used by our EAs (mql5/Experts) -> strategy names in the journal.
+KNOWN_MAGICS = {2201: "rsi2_reversion"}
+
 
 @dataclass
 class ImportResult:
@@ -87,7 +90,7 @@ def trades_from_history(
             source=source,
             account=account,
             position_id=pid,
-            strategy_id="manual" if magic == 0 else f"magic_{magic}",
+            strategy_id="manual" if magic == 0 else KNOWN_MAGICS.get(magic, f"magic_{magic}"),
             magic=magic,
             symbol=to_internal(ins[0]["symbol"]),
             broker_symbol=ins[0]["symbol"],

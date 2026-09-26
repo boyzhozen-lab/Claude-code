@@ -73,3 +73,8 @@ def test_server_timezone_is_converted_to_utc():
     result = trades_from_history([d._asdict() for d in deals], [], "1", "Europe/Athens", str)
     # 22:13 Athens wall clock in November (UTC+2) is 20:13 UTC.
     assert result.trades[0].open_time == "2023-11-14T20:13:20+00:00"
+
+
+def test_known_magic_maps_to_strategy_name():
+    deals = [deal(1, 60, T0, 0, 0, 1.0, 1.1, magic=2201), deal(2, 60, T0 + 60, 1, 1, 1.0, 1.2, profit=5.0)]
+    assert run(deals).trades[0].strategy_id == "rsi2_reversion"

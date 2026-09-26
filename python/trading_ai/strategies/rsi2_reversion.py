@@ -25,7 +25,9 @@ class RSI2Reversion(Strategy):
         "exit_len": [3, 5, 10],
     }
     max_bars = 10
-    default_symbols = ("SPX500", "NAS100", "DOW30", "GER40", "UK100", "JP225", "AUS200", "FRA40", "EU50", "HK50")
+    # US indices: strongest published evidence and the best walk-forward results.
+    # Other indices were tested (2026-09-26) and were flat or negative.
+    default_symbols = ("SPX500", "NAS100", "DOW30")
 
     def signals(self, bars: pd.DataFrame) -> pd.DataFrame:
         p = self.params
