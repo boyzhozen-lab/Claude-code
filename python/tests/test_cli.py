@@ -173,3 +173,21 @@ def test_forward_check_runs_end_to_end(fake_mt5, config_file, capsys):
     assert main(cfg + ["forward-check", "--symbols", "GOLD", "--since", since]) == 0
     out = capsys.readouterr().out
     assert "extra_live" in out and "extra live 1" in out
+
+
+def test_cost_check(config_file, capsys):
+    import numpy as np
+    import pandas as pd
+    from trading_ai.data.bars import save_bars
+    cfg_text = config_file.read_text() + '\n[costs]\nGOLD = 0.4\n'
+    config_file.write_text(cfg_text)
+    bars_dir = config_file.parent.parent / "data" / "bars"
+    for tf, freq, rng_ in (("M5", "5min", 1.0), ("D1", "D", 20.0)):
+        n = 500
+        close = 2000 + np.zeros(n)
+        save_bars(pd.DataFrame({"time": pd.date_range("2024-01-01", periods=n, freq=freq, tz="UTC"),
+                                "open": close, "high": close + rng_ / 2, "low": close - rng_ / 2, "close": close,
+                                "tick_volume": 1, "spread": 1}), bars_dir / f"GOLD_{tf}.csv")
+    assert main(["--config", str(config_file), "cost-check"]) == 0
+    out = capsys.readouterr().out
+    assert "GOLD" in out and "M5" in out and "40" in out and "2" in out   # 0.4/1.0 = 40%, 0.4/20 = 2%

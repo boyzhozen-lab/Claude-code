@@ -597,6 +597,33 @@ def cmd_watchdog(s: Settings, args: argparse.Namespace) -> int:
     return 1 if problems else 0
 
 
+def cmd_cost_check(s: Settings, args: argparse.Namespace) -> int:
+    """How big is the round-trip cost compared with a typical bar on each timeframe?"""
+    from trading_ai.indicators import atr
+    rows = []
+    for internal in args.symbols or list(s.symbols):
+        cost = s.costs.get(internal)
+        if cost is None:
+            continue
+        for tf in args.timeframes:
+            path = barstore.bars_path(s.bars_dir, internal, tf)
+            if not path.exists():
+                continue
+            bars = barstore.load_bars(path).tail(50_000)
+            typical = float(atr(bars, 14).median())
+            if typical > 0:
+                rows.append({"symbol": internal, "timeframe": tf, "cost": cost, "typical_bar_range": typical,
+                             "cost_pct_of_bar": 100 * cost / typical})
+    if not rows:
+        print("No bar files found. Run fetch-bars first.")
+        return 1
+    df = pd.DataFrame(rows)
+    print("Round-trip cost vs a typical bar (ATR 14). A stop of about one bar means this % of every 1R is paid as cost.")
+    print("Rule of thumb: above ~10% the strategy needs a very strong edge just to break even.\n")
+    print(df.to_string(index=False, float_format=lambda x: f"{x:,.4g}"))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="trading_ai", description="Trading AI tools")
     p.add_argument("--config", help="path to settings.toml (default: config/settings.toml)")
@@ -613,6 +640,11 @@ def build_parser() -> argparse.ArgumentParser:
     ls = sub.add_parser("list-symbols", help="find broker symbols by name/group/description, e.g. list-symbols indices")
     ls.add_argument("pattern", nargs="?", default="")
     ls.set_defaults(func=cmd_list_symbols)
+
+    cc = sub.add_parser("cost-check", help="trading cost as a share of a typical bar, per timeframe")
+    cc.add_argument("--symbols", nargs="+")
+    cc.add_argument("--timeframes", nargs="+", default=["M1", "M5", "M15", "H1", "D1"])
+    cc.set_defaults(func=cmd_cost_check)
 
     sub.add_parser("validate-bars", help="check downloaded bars for gaps and bad data").set_defaults(func=cmd_validate_bars)
 
