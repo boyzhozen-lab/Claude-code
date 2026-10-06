@@ -53,6 +53,7 @@
 | B | Mean Reversion (`rsi2_reversion`) | US500, US30 | ຊື້ຕອນຍໍ່ລົງແຮງໃນ uptrend | 1–5 ມື້ | ເລີ່ມກ່ອນ |
 | C | Session Breakout (`london_breakout`) | Gold, GBPUSD, EURUSD | ກອບລາຄາຊ່ວງ Asia (00–07 UTC) → ເທຣດການເບຣກຄັ້ງທຳອິດຊ່ວງ London (07–12), ປິດກ່ອນ 20 UTC | ພາຍໃນມື້ (H1) | ໂຄດແລ້ວ |
 | D | Turn of Month (`turn_of_month`) | US100, US500, US30 | ຖື indices ຊ່ວງທ້າຍເດືອນ ຫາ ຕົ້ນເດືອນ (ງານວິໄຈ Ariel 1987, McConnell & Xu 2008) | 3–6 ມື້ | ລໍຜົນ |
+| G | Intraday momentum (`intraday_momentum`) | US500, US100, US30 | ທິດທາງຈາກປິດມື້ວານ → 10:00 NY ທຳນາຍ 30 ນາທີສຸດທ້າຍ (Gao et al. 2018, JFE) | 30–60 ນາທີ | ລໍຜົນ |
 | E | RSI2 ສອງທາງ (`rsi2_both`) | Gold, Forex | ຊື້ຕອນຍໍ່ໃນຂາຂຶ້ນ, ຂາຍຕອນເດັ້ງໃນຂາລົງ | 1–10 ມື້ | ລໍຜົນ |
 | C2 | Session Breakout (`ny_breakout`) | US100, US500, US30, Gold | ກອບລາຄາຊ່ວງເປີດຕະຫຼາດ US (13–15 UTC) → ເທຣດການເບຣກຈົນຮອດ 18 UTC, ປິດກ່ອນ 20 UTC | ພາຍໃນມື້ (H1) | ໂຄດແລ້ວ |
 | F | Range Reversion | EURUSD ແລະ ຄູ່ເງິນທີ່ແກວ່ງໃນກອບ | ຂາຍຈຸດສູງ, ຊື້ຈຸດຕ່ຳ ຂອງກອບ | ພາຍໃນມື້ | ຕໍ່ມາ |

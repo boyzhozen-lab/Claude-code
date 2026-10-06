@@ -310,3 +310,39 @@ def test_daily_r_correlation():
     corr = daily_r_correlation(pd.concat([a, b, c]))
     assert corr.loc["a", "b"] == pytest.approx(1.0) and corr.loc["a", "c"] == pytest.approx(-1.0)
     assert daily_r_correlation(a).empty
+
+
+def _ny_m15_days(dates, first_moves, base=5000.0):
+    """M15 bars 09:00-17:00 New York for several days. first_moves[i] is the 09:30-10:00 move on day i."""
+    rows, price = [], base
+    for date, move in zip(dates, first_moves):
+        times = pd.date_range(f"{date} 09:00", f"{date} 17:00", freq="15min", tz="America/New_York", inclusive="left")
+        for t in times:
+            hm = t.strftime("%H:%M")
+            o = price
+            if hm in ("09:30", "09:45"):
+                price += move / 2
+            elif hm in ("15:30", "15:45"):
+                price += 2.0 if move > 0 else -2.0       # the last half hour follows the morning
+            rows.append((t.tz_convert("UTC"), o, max(o, price) + 0.5, min(o, price) - 0.5, price))
+    return pd.DataFrame(rows, columns=["time", "open", "high", "low", "close"])
+
+
+def test_intraday_momentum_trades_last_half_hour_in_morning_direction():
+    from trading_ai.strategies import IntradayMomentum
+    bars = _ny_m15_days(["2024-07-08", "2024-07-09", "2024-07-10"], [0.0, 20.0, -20.0])
+    trades = run_backtest(bars, IntradayMomentum(), "SPX500")
+    assert [t.direction for t in trades] == ["long", "short"]   # day 1 has no previous close
+    t = trades[0]
+    assert t.entry_time == pd.Timestamp("2024-07-09 19:30", tz="UTC")   # 15:30 EDT
+    assert t.exit_time == pd.Timestamp("2024-07-09 20:00", tz="UTC")    # 16:00 EDT
+    assert t.gross_r > 0 and trades[1].gross_r > 0
+
+
+def test_intraday_momentum_threshold_and_daily_bars_rejected():
+    from trading_ai.strategies import IntradayMomentum
+    bars = _ny_m15_days(["2024-01-08", "2024-01-09"], [0.0, 2.0])   # 0.04% move < 0.2%
+    assert run_backtest(bars, IntradayMomentum(min_move=0.002), "SPX500") == []
+    assert len(run_backtest(bars, IntradayMomentum(), "SPX500")) == 1
+    with pytest.raises(ValueError, match="M15"):
+        IntradayMomentum().signals(ohlc([FLAT] * 5))
